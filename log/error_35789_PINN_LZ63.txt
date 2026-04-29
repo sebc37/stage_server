@@ -1,7 +1,0 @@
-Traceback (most recent call last):
-  File "/Odyssey/private/s26calme/code_stage/PINN/Chaos_equation_pytorch.py", line 364, in <module>
-    main()
-  File "/Odyssey/private/s26calme/code_stage/PINN/Chaos_equation_pytorch.py", line 242, in main
-    with open(ruta_ini, "r") as f:
-         ^^^^^^^^^^^^^^^^^^^
-FileNotFoundError: [Errno 2] No such file or directory: 'input_chaos.txt'

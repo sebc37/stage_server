@@ -1,2 +1,0 @@
-/Odyssey/private/s26calme/code_stage/PINN/Chaos_equation_pytorch.py:303: UserWarning: Creating a tensor from a list of numpy.ndarrays is extremely slow. Please consider converting the list to a single numpy.ndarray with numpy.array() before converting to a tensor. (Triggered internally at /opt/conda/conda-bld/pytorch_1724789145202/work/torch/csrc/utils/tensor_new.cpp:278.)
-  y0_true = torch.tensor([y0],  dtype=torch.float32, device=device)  # (1,3)

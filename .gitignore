@@ -1,1 +1,3 @@
 *.dat
+*.log
+*error_*.txt

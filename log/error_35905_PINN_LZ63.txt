@@ -1,23 +1,0 @@
-  0%|          | 0/300000 [00:00<?, ?it/s]  0%|          | 0/300000 [00:02<?, ?it/s]
-Traceback (most recent call last):
-  File "/Odyssey/private/s26calme/code_stage/PINN/Causal_PINNs_lorentz_pytorch.py", line 250, in <module>
-    model.train(nIter=300000)
-  File "/Odyssey/private/s26calme/code_stage/PINN/Causal_PINNs_lorentz_pytorch.py", line 183, in train
-    loss_res_val = self.loss_res().item()
-                   ^^^^^^^^^^^^^^^
-  File "/Odyssey/private/s26calme/code_stage/PINN/Causal_PINNs_lorentz_pytorch.py", line 163, in loss_res
-    r1, r2, r3, W = self.residuals_and_weights()
-                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Odyssey/private/s26calme/code_stage/PINN/Causal_PINNs_lorentz_pytorch.py", line 146, in residuals_and_weights
-    r1, r2, r3 = self.residual_net(t_i)
-                 ^^^^^^^^^^^^^^^^^^^^^^
-  File "/Odyssey/private/s26calme/code_stage/PINN/Causal_PINNs_lorentz_pytorch.py", line 125, in residual_net
-    x_t = torch.autograd.grad(x, t_scalar, create_graph=True)[0]
-          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Odyssey/private/s26calme/miniforge3/envs/torch-env/lib/python3.11/site-packages/torch/autograd/__init__.py", line 436, in grad
-    result = _engine_run_backward(
-             ^^^^^^^^^^^^^^^^^^^^^
-  File "/Odyssey/private/s26calme/miniforge3/envs/torch-env/lib/python3.11/site-packages/torch/autograd/graph.py", line 769, in _engine_run_backward
-    return Variable._execution_engine.run_backward(  # Calls into the C++ engine to run the backward pass
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-RuntimeError: element 0 of tensors does not require grad and does not have a grad_fn
