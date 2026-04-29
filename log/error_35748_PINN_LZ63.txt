@@ -1,0 +1,9 @@
+  0%|          | 0/5 [00:00<?, ?it/s]  0%|          | 0/5 [00:00<?, ?it/s]
+Traceback (most recent call last):
+  File "/Odyssey/private/s26calme/code_stage/PINN/pinn_LRZ63_batch.py", line 495, in <module>
+    l,li,lb,lc,lp,lambda_enr =  t.train()
+                                ^^^^^^^^^
+  File "/Odyssey/private/s26calme/code_stage/PINN/pinn_LRZ63_batch.py", line 356, in train
+    loss_batch_phy,res_x,res_y,res_z = loss_phy(x=u_pred[:,:,0:1],y=u_pred[:,:,1:2],z=u_pred[:,:,2:3],T=times,lmb_x=lmb_x,lmb_y=lmb_y,lmb_z=lmb_z)
+                                                  ~~~~~~^^^^^^^^^
+IndexError: too many indices for tensor of dimension 2

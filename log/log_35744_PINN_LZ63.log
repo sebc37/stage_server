@@ -1,0 +1,31 @@
+===== JOB START =====
+ven. 24 avril 2026 10:36:37 CEST
+sl-mee-br-206
+===== GPU INFO =====
+Fri Apr 24 10:36:37 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 570.158.01             Driver Version: 570.158.01     CUDA Version: 12.8     |
+|-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  NVIDIA A100-SXM4-80GB          Off |   00000000:CB:00.0 Off |                    0 |
+| N/A   41C    P0             67W /  400W |       0MiB /  81920MiB |      0%      Default |
+|                                         |                        |             Disabled |
++-----------------------------------------+------------------------+----------------------+
+                                                                                         
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+===== LOAD CONDA =====
+===== START TRAINING =====
+[<architecture.Lorenz_Dataset object at 0x74b0c18f7a10>, <architecture.Lorenz_Dataset object at 0x74b0b0c4e110>, <architecture.Lorenz_Dataset object at 0x74b0b0c4edd0>]
+<architecture.Lorenz_Dataset object at 0x74b0c18f7a10>
+(tensor(0.), tensor([], size=(0, 3)))
+===== JOB END =====
+ven. 24 avril 2026 10:36:44 CEST

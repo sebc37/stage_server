@@ -1,0 +1,9 @@
+  0%|          | 0/10 [00:00<?, ?it/s]  0%|          | 0/10 [00:11<?, ?it/s]
+Traceback (most recent call last):
+  File "/Odyssey/private/s26calme/code_stage/PINN/pinn_LRZ63_batch.py", line 492, in <module>
+    l,li,lb,lc,lp =  t.train()
+                     ^^^^^^^^^
+  File "/Odyssey/private/s26calme/code_stage/PINN/pinn_LRZ63_batch.py", line 405, in train
+    lamnda_record[iteration,:] = np.array(lmb_bc.cpu().detach().numpy()
+                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: array() takes from 1 to 2 positional arguments but 5 were given

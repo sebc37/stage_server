@@ -1,0 +1,8 @@
+/Odyssey/private/s26calme/code_stage/GOY-main/8x64_50k/param.yaml
+{'PINN': [64, 8], 'ratio': 10, 'k_min_boundary': 0, 'k_max_boundary': 4, 'k_min_collocation': 4, 'k_max_collocation': 10, 'nb_iter': 50000, 'path_data': '/Odyssey/private/s26calme/code_stage/GOY-main/data.dat', 'path_graph': '/Odyssey/private/s26calme/code_stage/GOY-main/8x64_50k/'}
+cuda is available : True
+Moyenne de l'ensemble des mode -1.5420618e-08
+std de tous les modes  1.0
+49999
+tensor(5.9453, device='cuda:0', grad_fn=<AddBackward0>)
+RMSE: 1.2958623

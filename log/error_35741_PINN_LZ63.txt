@@ -1,0 +1,9 @@
+  0%|          | 0/5 [00:00<?, ?it/s]  0%|          | 0/5 [00:00<?, ?it/s]
+Traceback (most recent call last):
+  File "/Odyssey/private/s26calme/code_stage/PINN/pinn_LRZ63_batch.py", line 493, in <module>
+    l,li,lb,lc,lp,lambda_enr =  t.train()
+                                ^^^^^^^^^
+  File "/Odyssey/private/s26calme/code_stage/PINN/pinn_LRZ63_batch.py", line 358, in train
+    grad_res_x = torch.autograd.grad(res_x, model.parameters(),grad_outputs=torch.ones_like(res_x), retain_graph=True).detach()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'tuple' object has no attribute 'detach'

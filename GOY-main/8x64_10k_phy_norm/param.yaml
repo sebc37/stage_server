@@ -1,0 +1,29 @@
+PINN:
+    - 64
+    - 8
+
+ratio: 10
+
+k_min_boundary: 0
+
+k_max_boundary: 10
+
+k_min_collocation: 4
+
+k_max_collocation: 10
+
+nb_iter: 30000
+
+path_data: "/Odyssey/private/s26calme/code_stage/GOY-main/data.dat"
+
+path_graph: "/Odyssey/private/s26calme/code_stage/GOY-main/8x64_10k_phy_norm/"
+
+physic: 1
+
+initial: 0
+
+collocation: 0
+
+normalize_phy: 0
+
+inline_phy: 0
