@@ -327,7 +327,7 @@ j_start = 2
 
 amp = np.std(Data_shell, axis=0)
 
-nb = 30000
+nb = 3000
 # initialisation de l'ensemble 
 for i in range(Ne):
     #x_a_enkf_tmp[:,i] = np.random.multivariate_normal(x_0, P_0)
@@ -488,15 +488,15 @@ plt.legend()
 plt.savefig(SAVE + "log_variance_enKF.png",format='png')
 
 plt.figure()
-plt.semilogy([i for i in range(int(n/2))],(np.mean((Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2)**2 ,1))/np.mean((Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2),1),label='Truth')
-plt.semilogy([i for i in range(int(n/2))],(np.mean((x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2)**2 ,1))/np.mean((x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2),1),label='pred')
+plt.semilogy([i for i in range(int(n/2))],(np.mean((Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2)**2 ,1))/np.mean((Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2),1)**2,label='Truth')
+plt.semilogy([i for i in range(int(n/2))],(np.mean((x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2)**2 ,1))/np.mean((x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2),1)**2,label='pred')
 plt.xlabel('shell number')
 plt.ylabel('$log(frac{<|U_n|^4>_T}{<|U_n|^2>_T})$')
 plt.legend()
 plt.savefig(SAVE + "log_kurtosis_enKF.png",format='png')
 
 plt.figure()
-plt.semilogy([i for i in range(n)], np.sqrt(np.mean((x_a_enkf[:,0:nb] - Data_shell.T[:,0:nb])**2,1))/np.mean(Data_shell.T[:,0:nb]**2,1), marker='o')
+plt.semilogy([i for i in range(int(n/2))], np.sqrt(np.mean((np.sqrt(x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2) - np.sqrt(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2))**2,1))/np.mean(np.sqrt(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2)**2,1), marker='o')
 plt.xlabel('shell number')
 plt.ylabel('RMSE')
 plt.savefig(SAVE + "RMSE_enKF.png",format='png')
