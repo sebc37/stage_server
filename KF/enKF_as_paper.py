@@ -108,7 +108,7 @@ MS = np.array([(0.05**2)*np.mean(shell_array[:,k]**2 ) for k in range(0,44,2)])
 ### parameters
 n     = 44 # state size  on veut estimer les Un de 1 à 22 avec Re et Im donc 44 variables d'état
 p     = 2*(k_max_collocation-k_min_collocation + 1) # On observe Un n=5,6,7,8,9,10 avec Re et Im donc 12 variables d'observations 
-nb    = Npts # number of times
+nb    = 3000#Npts # number of times
 time  = np.array(range(nb)) # time vector
 var_Q = 0.0 # error variance of the model (in Kalman)
 var_R = 0.1 # error variance of the observations (in Kalman)
@@ -327,7 +327,7 @@ j_start = 2
 
 amp = np.std(Data_shell, axis=0)
 
-nb = 3000
+
 # initialisation de l'ensemble 
 for i in range(Ne):
     #x_a_enkf_tmp[:,i] = np.random.multivariate_normal(x_0, P_0)
@@ -481,7 +481,7 @@ print('RMSE(EnKF):', np.sqrt(np.mean((x_a_enkf[:,0:nb] - Data_shell.T[:,0:nb])**
 plt.figure()
 plt.semilogy([i for i in range(int(n/2))],np.mean(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2,1),label='Truth')
 plt.semilogy([i for i in range(int(n/2))],np.mean(x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2,1),label='pred')
-plt.semilogy([i for i in range(1,int(n/2))],[i**(-1/3) for i in range(1,int(n/2))],'--',alpha=0.5)
+plt.semilogy([i for i in range(int(n/2))],[k**(-2/3) for k in K],'--',alpha=0.5)
 plt.xlabel('shell number')
 plt.ylabel('$log(<|U_n|^2>_T)$')
 plt.legend()
