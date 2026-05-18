@@ -66,6 +66,9 @@ Npts = np.shape(Data_shell)[0] # nombre de pas dans le temps
 k_min_collocation = 6 
 k_max_collocation = 8 
 
+obs_start = k_max_collocation + 2
+obs_end = obs_start + 2
+
 #nb of shells for training on boundary conditions
 k_bc_min = 0
 k_bc_max = 4 
@@ -107,8 +110,8 @@ MS = np.array([(0.05**2)*np.mean(shell_array[:,k]**2 ) for k in range(0,44,2)])
 
 ### parameters
 n     = 44 # state size  on veut estimer les Un de 1 à 22 avec Re et Im donc 44 variables d'état
-p     = 2*(k_max_collocation-k_min_collocation + 1) # On observe Un n=5,6,7,8,9,10 avec Re et Im donc 12 variables d'observations 
-nb    = 30000#Npts # number of times
+p     = 2*(obs_end-k_min_collocation + 1) # On observe Un n=5,6,7,8,9,10 avec Re et Im donc 12 variables d'observations 
+nb    = 16000 # number of times
 time  = np.array(range(nb)) # time vector
 var_Q = 0.0 # error variance of the model (in Kalman)
 var_R = 0.1 # error variance of the observations (in Kalman)
@@ -122,7 +125,7 @@ for i in range(22):
 
 ### variables
 
-m = MS[4:10]
+m = MS[k_min_collocation-1:obs_end]
 R = np.eye(p,p)
 Q      = np.eye(n,n)
 for i in range(22):
@@ -135,7 +138,7 @@ for i in range(int(p/2)):
 
 ##############  noisy observations ##################
 y_obs = Data_shell.T.copy() # observations = données réelles  
-y_obs_ = y_obs[2*k_min_collocation:2*k_max_collocation,:]
+y_obs_ = y_obs[2*k_min_collocation:2*obs_end,:]
 a = y_obs_.copy()
 
 # for t in range(Npts):
@@ -157,7 +160,7 @@ a = y_obs_.copy()
 ######### paramètres du modèle pour l'intégration #############################
 TIME      = 1000.
 DT        = 1e-5
-FS        = 999.
+FS        = 100.
 FORCE     = 0.005
 N_FORCE   = 4
 FORCE_RND = 0
@@ -267,13 +270,54 @@ def generate_observations(p, H):
     #y[:,i_nan] = y[:,i_nan]*np.nan # remove observations 
     return y, R
 
-H = np.eye(44,44) #array([[1,0,0,0], [0,1,0,0]])
-H = H[2*(k_min_collocation-1):2*k_max_collocation,:] # on observe que les modes de 5 à 10 avec Re et Im donc 12 variables d'observations
+ #array([[1,0,0,0], [0,1,0,0]])
+shell_observed = k_max_collocation + 2
+#H = H[2*(k_min_collocation-1):2*shell_observed,:] # on observe que les modes de 5 à 10 avec Re et Im donc 12 variables d'observations
 
-i_nan = np.random.choice(Npts, size=int(0.8*Npts), replace=False) # indices des observations à supprimer
+def make_H(kmin,kmax,obs_start,obs_end):
+    '''
+    H = Identité_2*nb_shell
+    obs_start > shell_start + consecutive
+    '''
+    H = np.eye(44,44)
+    for i in range(2*kmax,2*(obs_start-1)):
+        H[i,:]=np.zeros_like(H[0])
 
-y_obs = H @ Data_shell.T + np.random.multivariate_normal(np.zeros(p),R,size=(Npts,)).T # vrai observation 
-#y_obs[:,i_nan] = y_obs[:,i_nan]*np.nan
+    H = H[2*(kmin-1):2*(obs_end)]
+    
+    return H
+H = make_H(k_min_collocation,k_max_collocation,obs_start,obs_end)
+print("Observation matrix H:",H.shape)
+
+# Indices of time steps where obs_start:obs_end shells are NOT observed (99% missing)
+i_nan = np.random.choice(Npts, size=int(0.99*Npts), replace=False)
+
+# ── Build y_obs with explicit NaN for unobserved shells ──────────────────────
+# Shape: (p, Npts)  where p = 2*(obs_end - k_min_collocation + 1)
+# Row layout inside y_obs (each shell occupies 2 rows: Re and Im):
+#   rows 0 .. 2*(k_max_collocation-k_min_collocation)-1  → collocation shells (always observed)
+#   rows 2*(k_max_collocation-k_min_collocation) .. 2*(obs_start-k_min_collocation)-1 → gap  (NaN)
+#   rows 2*(obs_start-k_min_collocation) .. p-1           → interscale shells  (sparse: 1% observed)
+
+noise = np.random.multivariate_normal(np.zeros(p), R, size=(Npts,)).T  # (p, Npts)
+y_obs = H[:, 2*(k_min_collocation-1):2*obs_end] @ (
+    Data_shell.T[2*(k_min_collocation-1):2*obs_end] + noise
+)   # (p, Npts), true observations with noise
+
+# Gap rows (shells between k_max_collocation and obs_start): set to NaN
+gap_start = 2 * (k_max_collocation - k_min_collocation + 1)
+gap_end   = 2 * (obs_start       - k_min_collocation + 1)
+y_obs[gap_start:gap_end, :] = np.nan
+
+# Interscale rows (obs_start..obs_end): observed only at 1% of time steps
+interscale_start = gap_end
+interscale_end   = 2 * (obs_end - k_min_collocation + 1)
+y_obs[interscale_start:interscale_end, i_nan] = np.nan
+
+print(f"y_obs shape          : {y_obs.shape}")
+print(f"Collocation rows     : {k_min_collocation} .. {gap_start-1}  (always observed)")
+print(f"Gap rows (NaN)       : {gap_start} .. {gap_end-1}")
+print(f"Interscale rows      : {interscale_start} .. {interscale_end-1}  (~1 % observed)")
 
 # tiré des temps au hasard pour enlever des observations 
 
@@ -327,7 +371,7 @@ j_start = 2
 
 amp = np.std(Data_shell, axis=0)
 
-
+# nb = 3000
 # initialisation de l'ensemble 
 for i in range(Ne):
     #x_a_enkf_tmp[:,i] = np.random.multivariate_normal(x_0, P_0)
@@ -364,9 +408,9 @@ P_a_enkf[:,:,0] = np.cov(x_a_enkf_tmp)    # initial state covariance
 #     plt.savefig(SAVE + f"xy_start_enKF_{j}")
 lmb_inf = 0.2
 g = np.zeros((n,nb))
-for k in tqdm.tqdm(range(nb)): # forward in time #nb
-    # prediction step
-    # il faut un initialisation custom pour chaque Ne
+for k in tqdm.tqdm(range(nb)): # forward in time
+
+    # ── Prediction step ───────────────────────────────────────────────────────
     for i in range(Ne):
         Xpp_n, Ypp_n, Xp_n, Yp_n = m_step(
                 ens_Xpp[i], ens_Ypp[i], ens_Xp[i], ens_Yp[i])
@@ -376,87 +420,105 @@ for k in tqdm.tqdm(range(nb)): # forward in time #nb
         fens_Xp[i]  = Xp_n
         fens_Yp[i]  = Yp_n
 
-        x_f_enkf_tmp[0::2,i] = Xp_n.T # forward sans bruit du modèle, on suppose que le modèle est parfait
+        x_f_enkf_tmp[0::2,i] = Xp_n.T
         x_f_enkf_tmp[1::2,i] = Yp_n.T
 
-        #_,_,forward_x,forward_y  = m_b(x_a_enkf_tmp[:,i].T,N_fs=999,n_steps_first=998,custom=True)
-        #x_f_enkf_tmp[0::2,i],x_f_enkf_tmp[1::2,i] = forward_x.T,forward_y.T ### A CACHER
-        # Modèle supposé parfait ==> pas de bruit du modèle
-        #x_f_enkf_tmp[:,i] += np.random.multivariate_normal(np.zeros(n), Q)
-                                            # c'est un moins dans le papier à verifier
-        y_f_enkf_tmp[:,i] = H @ x_f_enkf_tmp[:,i] + np.random.multivariate_normal(np.zeros(p), R) ### A CACHER
-    
     ens_Xpp = fens_Xpp
     ens_Ypp = fens_Ypp
     ens_Xp  = fens_Xp
     ens_Yp  = fens_Yp
 
-    P_f_enkf_tmp = np.cov(x_f_enkf_tmp) ### A CACHER
-    # Kalman gain
-    
-    K_g = P_f_enkf_tmp @ H.T @ np.linalg.inv(H @ P_f_enkf_tmp @ H.T + R) ### A CACHER
-    # update step
-    if(sum(np.isfinite(y_obs[:,k]))>0):
+    P_f_enkf_tmp = np.cov(x_f_enkf_tmp)
+
+    # ── Build dynamic H_k / R_k: keep only rows where y_obs is not NaN ───────
+    # obs_mask is True for every observation component that is available at time k
+    obs_mask = ~np.isnan(y_obs[:, k])
+    p_k = int(obs_mask.sum())   # effective observation dimension at this step
+
+    if p_k > 0:
+        H_k = H[obs_mask, :]                  # (p_k, n)
+        R_k = R[np.ix_(obs_mask, obs_mask)]   # (p_k, p_k)
+        y_k = y_obs[obs_mask, k]              # (p_k,)
+
+        # Innovation covariance and Kalman gain
+        S_k = H_k @ P_f_enkf_tmp @ H_k.T + R_k          # (p_k, p_k)
+        K_g = P_f_enkf_tmp @ H_k.T @ np.linalg.inv(S_k) # (n,  p_k)
+
+        # Stochastic EnKF update: perturb observations for each member
         for i in range(Ne):
-            x_a_enkf_tmp[:,i] = x_f_enkf_tmp[:,i] + K_g @ (y_obs[:,k] - y_f_enkf_tmp[:,i]) ### A CACHER
-        P_a_enkf_tmp = np.cov(x_a_enkf_tmp) ### A CACHER
-        
-        # inflation multiplicative
-        P_a_tilde[:,:,k] = (np.eye(n) - K_g @ H) @ P_f_enkf_tmp ### A CACHER
-        mu_n = np.mean(x_a_enkf_tmp, axis=1) ### A CACHER
+            y_pert = y_k #+ np.random.multivariate_normal(np.zeros(p_k), R_k)
+            innov  = y_pert - H_k @ x_f_enkf_tmp[:, i]   # (p_k,)
+            x_a_enkf_tmp[:, i] = x_f_enkf_tmp[:, i] + K_g @ innov
+
+        P_a_enkf_tmp = np.cov(x_a_enkf_tmp)
+
+        # Multiplicative inflation
+        P_a_tilde[:,:,k] = (np.eye(n) - K_g @ H_k) @ P_f_enkf_tmp
+        mu_n = np.mean(x_a_enkf_tmp, axis=1)
 
         for j in range(n):
-                g[j,k] = max(1,1+lmb_inf*(P_f_enkf_tmp[j,j]-P_a_tilde[j,j,k])/P_f_enkf_tmp[j,j]) # terme d'inflation multiplicative pour chaque variable d'état ### A CACHER
-        
-        for i in range(Ne):
-            x_a_enkf_tmp[:,i] = g[:,k]*x_a_enkf_tmp[:,i] + (1-g[:,k])*mu_n # inflation multiplicative sur les membres de l'ensemble ### A CACHER
-        
+            g[j,k] = max(1, 1 + lmb_inf * (P_f_enkf_tmp[j,j] - P_a_tilde[j,j,k])
+                                           / P_f_enkf_tmp[j,j])
 
-        x_f_enkf[:,k]   = np.mean(x_f_enkf_tmp,1)
-        P_f_enkf[:,:,k] = P_f_enkf_tmp
-        x_a_enkf[:,k]   = np.mean(x_a_enkf_tmp,1) # g*  + (1-g)*mu_n g[:,k]* + (1-g[:,k])*mu_n 
-        P_a_enkf[:,:,k] = P_a_tilde[:,:,k]#P_a_enkf_tmp
-        # U_tilde = g*U_tilde + (1-g)*mu_n[:,None] 
+        for i in range(Ne):
+            x_a_enkf_tmp[:,i] = g[:,k]*x_a_enkf_tmp[:,i] + (1-g[:,k])*mu_n
 
     else:
-            #x_a_enkf_tmp[:,:,0] = x_a_enkf_tmp[:,:,1]
-            x_a_enkf_tmp = x_f_enkf_tmp
-            P_a_enkf_tmp = P_f_enkf_tmp 
-    # store results
-            x_f_enkf[:,k]   = np.mean(x_f_enkf_tmp,1)
-            P_f_enkf[:,:,k] = P_f_enkf_tmp
-            x_a_enkf[:,k]   = np.mean(x_a_enkf_tmp,1)
-            P_a_enkf[:,:,k] = P_a_enkf_tmp
-    
-    ens_Xpp = fens_Xpp
-    ens_Ypp = fens_Ypp
+        # No observation available: analysis = forecast, no update
+        x_a_enkf_tmp     = x_f_enkf_tmp.copy()
+        P_a_enkf_tmp     = P_f_enkf_tmp
+        P_a_tilde[:,:,k] = P_f_enkf_tmp
+        g[:,k]           = 1.0
+
+    # ── Store results ─────────────────────────────────────────────────────────
+    x_f_enkf[:,k]   = np.mean(x_f_enkf_tmp, 1)
+    P_f_enkf[:,:,k] = P_f_enkf_tmp
+    x_a_enkf[:,k]   = np.mean(x_a_enkf_tmp, 1)
+    P_a_enkf[:,:,k] = np.cov(x_a_enkf_tmp)
+
     ens_Xp  = x_a_enkf_tmp[0::2,:].T
     ens_Yp  = x_a_enkf_tmp[1::2,:].T
 
 
+# NaN masking already applied at observation construction time (see above)
+
+
 ### plot trajectories (true, observed, KF, EnKF)
 for i in range(N):
-    if (i>=k_min_collocation-1) and (i<k_max_collocation):
-        plt.figure()
-        plt.fill_between(time[0:nb], x_a_enkf[2*i,0:nb] - 1.96*np.sqrt(P_a_tilde[2*i,2*i,0:nb]), x_a_enkf[2*i,0:nb] + 1.96*np.sqrt(P_a_tilde[2*i,2*i,0:nb]), facecolor='red', alpha=0.4)
-        
-        plt.plot(y_obs[2*i-2*(k_min_collocation-1),0:nb], '.k',alpha=0.3, label=f'Observations ($y {i+1}$)')
-        plt.plot(x_a_enkf[2*i,0:nb], 'r', label=f'EnKF ($U^a {i+1}$)')
-        plt.plot(Data_shell.T[2*i,j_start:nb+j_start], 'b', label=f'True state ($U_{i+1}$)')
-        plt.xlabel('$time$')
-        plt.ylabel(f'$\Re(U_{i+1})$')
-        plt.legend()
-        
+    if ((i>=k_min_collocation-1) and (i<k_max_collocation)) or((i>=obs_start-1) and (i<obs_end)):
+        if ((i>=obs_start-1) and (i<obs_end)):
+            plt.figure()
+            plt.fill_between(time[0:nb], x_a_enkf[2*i,0:nb] - 1.96*np.sqrt(P_a_tilde[2*i,2*i,0:nb]), x_a_enkf[2*i,0:nb] + 1.96*np.sqrt(P_a_tilde[2*i,2*i,0:nb]), facecolor='red', alpha=0.4)
+            
+            plt.plot(y_obs[2*i-2*(k_min_collocation-1),0:nb], '.k',alpha=0.3, label=f'Observations ($y {i+1}$)')
+            plt.plot(x_a_enkf[2*i,0:nb], 'r', label=f'EnKF ($U^a {i+1}$)')
+            plt.plot(Data_shell.T[2*i,j_start:nb+j_start], 'b', label=f'True state ($U_{i+1}$)')
+            plt.xlabel('$time$')
+            plt.ylabel(f'$\Re(U_{i+1})$')
+            plt.legend()
+            
+
+        if((i>=k_min_collocation-1) and (i<k_max_collocation)):
+            plt.figure()
+            plt.fill_between(time[0:nb], x_a_enkf[2*i,0:nb] - 1.96*np.sqrt(P_a_tilde[2*i,2*i,0:nb]), x_a_enkf[2*i,0:nb] + 1.96*np.sqrt(P_a_tilde[2*i,2*i,0:nb]), facecolor='red', alpha=0.4)
+            
+            plt.plot(y_obs[2*i-2*(k_min_collocation-1),0:nb], '.k',alpha=0.3, label=f'Observations ($y {i+1}$)')
+            plt.plot(x_a_enkf[2*i,0:nb], 'r', label=f'EnKF ($U^a {i+1}$)')
+            plt.plot(Data_shell.T[2*i,j_start:nb+j_start], 'b', label=f'True state ($U_{i+1}$)')
+            plt.xlabel('$time$')
+            plt.ylabel(f'$\Re(U_{i+1})$')
+            plt.legend()
+
+
     else:
-        plt.figure()
-        plt.fill_between(time[0:nb], x_a_enkf[2*i,0:nb] - 1.96*np.sqrt(P_a_tilde[2*i,2*i,0:nb]), x_a_enkf[2*i,0:nb] + 1.96*np.sqrt(P_a_tilde[2*i,2*i,0:nb]), facecolor='red', alpha=0.4)
-        plt.plot(x_a_enkf[2*i,0:nb], 'r', label=f'EnKF ($U^a_{i+1}$)')
-        plt.plot(Data_shell.T[2*i,j_start:nb+j_start], 'b', label=f'True state ($U_{i+1}$)')
-        plt.xlabel('$time$')
-        plt.ylabel(f'$ \Re(U_{i+1})$')
-        plt.legend()
-    plt.savefig(SAVE + f"fig1enKF_{i}.png",format='png',dpi=400)
-    plt.close()
+            plt.figure()
+            plt.fill_between(time[0:nb], x_a_enkf[2*i,0:nb] - 1.96*np.sqrt(P_a_tilde[2*i,2*i,0:nb]), x_a_enkf[2*i,0:nb] + 1.96*np.sqrt(P_a_tilde[2*i,2*i,0:nb]), facecolor='red', alpha=0.4)
+            plt.plot(x_a_enkf[2*i,0:nb], 'r', label=f'EnKF ($U^a_{i+1}$)')
+            plt.plot(Data_shell.T[2*i,j_start:nb+j_start], 'b', label=f'True state ($U_{i+1}$)')
+            plt.xlabel('$time$')
+            plt.ylabel(f'$ \Re(U_{i+1})$')
+            plt.legend()
+    plt.savefig(SAVE + f"fig1enKF_{i}.png",format='png')
     # plt.figure()
     # plt.plot(time[0:nb],g[i,0:nb],label=f'inflation factor g for variable $U_{i//2}$')
     # plt.xlabel('time')
@@ -479,9 +541,23 @@ for i in range(N):
 #     plt.ylabel(y_label[i-4], size=20)
 # plt.savefig(SAVE + "fig2enKF")
 ### compute Root Mean Squared Errors (RMSE) of the positions
-print('RMSE(obs):', np.sqrt(np.mean((y_obs[:,0:nb] - Data_shell.T[range(2*(k_min_collocation-1),2*k_max_collocation,1),0:nb])**2))) ### A CACHER
+#print('RMSE(obs):', np.sqrt(np.mean((y_obs[:,0:nb] - Data_shell.T[range(2*(k_min_collocation-1),2*k_max_collocation,1),0:nb])**2))) ### A CACHER
 
 print('RMSE(EnKF):', np.sqrt(np.mean((x_a_enkf[:,0:nb] - Data_shell.T[:,0:nb])**2,1))) 
+
+# plt.figure()
+# plt.plot([i for i in range(n)], np.sqrt(np.mean((x_a_enkf[:,0:nb] - Data_shell.T[:,0:nb])**2,1)), marker='o')
+# plt.xlabel('shell number')
+# plt.ylabel('RMSE')
+# plt.savefig(SAVE + "RMSE_enKF.png",format='png',dpi=400)
+
+
+plt.figure()
+plt.semilogy([i for i in range(int(n/2))], np.sqrt(np.mean((np.sqrt(x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2) - np.sqrt(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2))**2,1))/np.mean(np.sqrt(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2)**2,1), marker='o')
+plt.xlabel('shell number')
+plt.ylabel('RMSE')
+plt.savefig(SAVE + "RMSE_enKF.png",format='png')
+plt.close()
 
 plt.figure()
 plt.semilogy([i for i in range(int(n/2))],np.mean(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2,1),label='Truth')
@@ -501,35 +577,4 @@ plt.xlabel('shell number')
 plt.ylabel('$log({<|U_n|^4>_T}/{(<|U_n|^2>_T)^2})$')
 plt.legend()
 plt.savefig(SAVE + "log_kurtosis_enKF.png",format='png')
-plt.close()
-
-x_mean = []
-x_std = []
-cut=100
-for i in range(cut):
-    x_mean.append(np.mean(x_a_enkf[:,int(i*nb/cut):int((i+1)*nb/cut)],1))
-    x_std.append(np.var(x_a_enkf[:,int(i*nb/cut):int((i+1)*nb/cut)],1))
-print("mean:",x_mean)
-print("std:",x_std) 
-
-
-for j in range(0,n,2):
-    plt.figure()
-    _mean = [x_mean[i][j] for i in range(cut)]
-    _std = [x_std[i][j] for i in range(cut)]
-    plt.plot([k for k in range(int(cut))],_mean,'.', label=f'mean {j}')
-    plt.errorbar([j for j in range(cut)], _mean, _std, linestyle='None', label=f'var {j}',marker='^', color='blue')
-    
-    plt.xlabel('time')
-    plt.ylabel('mean and std of EnKF estimates')
-    plt.legend()
-    plt.savefig(SAVE + f"mean_enKF_over_time_{j}.png",format='png')
-    plt.close()
-
-
-plt.figure()
-plt.semilogy([i for i in range(int(n/2))], np.sqrt(np.mean((np.sqrt(x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2) - np.sqrt(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2))**2,1))/np.mean(np.sqrt(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2)**2,1), marker='o')
-plt.xlabel('shell number')
-plt.ylabel('RMSE')
-plt.savefig(SAVE + "RMSE_enKF.png",format='png')
 plt.close()
