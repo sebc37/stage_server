@@ -32,10 +32,10 @@ rho   = 28.0
 beta  = 8.0 / 3.0
 
 # ─── Time domain ─────────────────────────────────────────────────────────────
-t0, t1 = 0.0, 2.0        # short window so HMC stays tractable
-N_tr_u = 20              # observed data points
-N_tr_f = 64              # collocation (ODE residual) points
-N_val  = 200             # validation grid
+t0, t1 = 0.0, 10.0        # short window so HMC stays tractable
+N_tr_u = 100              # observed data points
+N_tr_f = 128              # collocation (ODE residual) points
+N_val  = 10000            # validation grid
 
 # ─── Ground-truth trajectory via RK4 ─────────────────────────────────────────
 def lorenz_rhs(state, sigma=sigma, rho=rho, beta=beta):
@@ -54,8 +54,8 @@ def rk4(state0, ts):
         states.append([s[j] + (dt/6)*(k1[j]+2*k2[j]+2*k3[j]+k4[j]) for j in range(3)])
     return np.array(states)   # (T, 3)
 
-ts_dense = np.linspace(t0, t1, 2000)
-xyz0     = [1.0, 1.0, 1.0]
+ts_dense = np.linspace(t0, t1, 10000)
+xyz0     = [8.0, 0.0, 30.0]
 traj     = rk4(xyz0, ts_dense)   # (2000, 3)
 
 def true_xyz(t_tensor):
@@ -68,7 +68,7 @@ def true_xyz(t_tensor):
 hamiltorch.set_random_seed(123)
 prior_std   = 1.0
 like_std    = 0.1
-step_size   = 0.0001       # small: Lorenz gradients are O(10-100) near the attractor
+step_size   = 0.00001       # small: Lorenz gradients are O(10-100) near the attractor
 burn        = 200
 num_samples = 500
 L           = 100
@@ -76,12 +76,12 @@ layer_sizes = [1, 32, 32, 3]   # t -> (x, y, z)
 activation  = torch.tanh
 pde         = True
 pinns       = True          # warm-start with MAP/PINNs, then switch to HMC below
-epochs      = 200000
+epochs      = 80000
 tau_priors  = 1.0 / prior_std**2
 # tau_likes must be a list [obs_precision, ode_precision] when pde=True.
 # Lorenz RHS values are O(10-100), so a large ode precision explodes gradients.
-tau_obs   = 1.0 / like_std**2   # 100 -- tight on observations
-tau_ode   = 10.                  # loose on physics to keep gradients finite
+tau_obs   = 1 / like_std**2   # 100 -- tight on observations
+tau_ode   = 1.                  # loose on physics to keep gradients finite
 tau_likes = [tau_obs, tau_ode]
 
 # ─── Build datasets ──────────────────────────────────────────────────────────

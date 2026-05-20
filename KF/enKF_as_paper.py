@@ -59,25 +59,19 @@ data =  np.loadtxt(path_data,dtype=np.float64) # charge le jeu de données
 Nmax = np.shape(data)[0] # nombres de pas de temps
 debut = int(0.1*Nmax) # skip la phase de stabilisation
 
-Data_shell = data[debut:Nmax,:] # on garde  partie réelle de chaque shell
+Data_shell = data[debut:Nmax,:] # on garde après spin up
 Npts = np.shape(Data_shell)[0] # nombre de pas dans le temps
 
-# nb of shells selected for training the PINN on collocatin point
+# shell observées entièrement 
 k_min_collocation = 6 
 k_max_collocation = 8 
 
-#nb of shells for training on boundary conditions
-k_bc_min = 0
-k_bc_max = 4 
+# paramètres goy model
+k0 = 0.125 # grande echelle
+lmb = 2.0 
 
-k0 = 0.125
-lmb = 2.0
-# retourne un dataset pour plot , var,std,et mean pour chaque mode et les colocation point centré réduit
-Data_filtered, Data_train, mean, Var_mode, Std_mode, perc= filter_mode(Data_shell,2*k_min_collocation,2*k_max_collocation,0,0.001,123456)
-#Data_shell = reduced_center(Data_shell,mean=mean,std=Std_mode)
-#Data_filtered = reduced_center(Data_filtered,mean=mean,std=Std_mode) # données réelles
 
-K = np.array([k0*lmb**i for i in range(22)],dtype=np.float32)
+K = np.array([k0*lmb**i for i in range(22)],dtype=np.float32) # coeff kn
 
 #########################
 #       calcul Tn       #
@@ -93,6 +87,7 @@ plt.plot(Tn,'.b')
 plt.xlabel('Shell number')
 plt.ylabel('Turnover time')
 plt.savefig(SAVE + "Turnover_times.png",format='png')
+plt.close()
 print("Turnover times:",min(Tn),max(Tn))
 # for i in range(np.shape(y_obs)[0]):
 #     plt.figure()
@@ -101,14 +96,14 @@ print("Turnover times:",min(Tn),max(Tn))
 #     plt.savefig(PATH + "ploty",dpi=300)
 
 shell_array = np.array(Data_shell)
-MS = np.array([(0.05**2)*np.mean(shell_array[:,k]**2 ) for k in range(0,44,2)])
+MS = np.array([(0.05**2)*np.mean(np.abs(shell_array[:,k])**2 ) for k in range(0,44,2)])
 #MS = np.array([(0.05**2)*np.mean(shell_array[:,k]**2 + shell_array[:,k+1]**2) for k in range(44)]) # variance de l'observation pour chaque shell
 
 
 ### parameters
 n     = 44 # state size  on veut estimer les Un de 1 à 22 avec Re et Im donc 44 variables d'état
-p     = 2*(k_max_collocation-k_min_collocation + 1) # On observe Un n=5,6,7,8,9,10 avec Re et Im donc 12 variables d'observations 
-nb    = 30000#Npts # number of times
+p     = 2*(k_max_collocation-k_min_collocation + 1) # On observe Un n=6,7,8 avec Re et Im donc variables d'observations 
+nb    = Npts # number of times
 time  = np.array(range(nb)) # time vector
 var_Q = 0.0 # error variance of the model (in Kalman)
 var_R = 0.1 # error variance of the observations (in Kalman)
@@ -122,7 +117,7 @@ for i in range(22):
 
 ### variables
 
-m = MS[4:10]
+m = MS[k_min_collocation:k_max_collocation+1] # bruit des shells observées
 R = np.eye(p,p)
 Q      = np.eye(n,n)
 for i in range(22):
@@ -135,8 +130,8 @@ for i in range(int(p/2)):
 
 ##############  noisy observations ##################
 y_obs = Data_shell.T.copy() # observations = données réelles  
-y_obs_ = y_obs[2*k_min_collocation:2*k_max_collocation,:]
-a = y_obs_.copy()
+# y_obs_ = y_obs[2*k_min_collocation:2*k_max_collocation,:]
+# a = y_obs_.copy()
 
 # for t in range(Npts):
 #     y_obs_[:,t]  = y_obs_[:,t] + np.random.multivariate_normal(np.zeros(p),R)
@@ -168,41 +163,41 @@ nu =1.0e-7
 
 
 
-def m_b(x_past,N_fs,n_steps_first,start=False,second = False,custom=False):
-    # ── choix du point de départ ──────────────────────────────────────────────────
-    #i      = 10000   # ligne du fichier depuis laquelle on repart
-     # nombre de lignes suivantes à reproduire
+# def m_b(x_past,N_fs,n_steps_first,start=False,second = False,custom=False):
+#     # ── choix du point de départ ──────────────────────────────────────────────────
+#     #i      = 10000   # ligne du fichier depuis laquelle on repart
+#      # nombre de lignes suivantes à reproduire
 
-     # pas entre deux lignes du fichier
-     # pas spéciaux pour la ligne 0 (voir run_goy.py)
+#      # pas entre deux lignes du fichier
+#      # pas spéciaux pour la ligne 0 (voir run_goy.py)
 
-    # ── reconstruction de Xpp (état à t_i - dt) ──────────────────────────────────
-    # On part de la ligne i-1 et on intègre 998 pas → on arrive à t_i - dt
-    if start:
-        # cas particulier : ligne 0, on repart des CI
-        Xpp0, Ypp0, Xp0, Yp0 = model.init_fields()
-        (Xpp, Ypp), (Xp, Yp) = model.integrate(Xpp0, Ypp0, Xp0, Yp0, n_steps=n_steps_first - 1)
-    else:
-        # ligne i-1 → intègre N_fs-1 pas → arrive à t_i - dt
-        if custom:
-            Xpp0,Ypp0,Xp0,Yp0 = model.init_fields(Xpp=x_past[0,0::2],Ypp=x_past[0,1::2])
-            (cur_Xpp, cur_Ypp), (cur_Xp, cur_Yp) = model.integrate(
-                Xpp0, Ypp0, Xp0, Yp0, n_steps=n_steps_first)
-            return cur_Xpp,cur_Ypp,cur_Xp,cur_Yp
-        if second:
-            Xpp0, Ypp0, Xp0, Yp0 = model.init_fields()
-            (cur_Xpp, cur_Ypp), (cur_Xp, cur_Yp) = model.integrate(
-                Xpp0, Ypp0, Xp0, Yp0, n_steps=n_steps_first)
-        else:
-            Xp_prev2 = x_past[0, 0::2];  Yp_prev2 = x_past[0, 1::2]
-            Xp_prev1 = x_past[1, 0::2];  Yp_prev1 = x_past[1, 1::2]
-            (cur_Xpp, cur_Ypp), (cur_Xp, cur_Yp) = model.integrate(
-                Xp_prev2, Yp_prev2, Xp_prev1, Yp_prev1, n_steps=N_fs - 1)
+#     # ── reconstruction de Xpp (état à t_i - dt) ──────────────────────────────────
+#     # On part de la ligne i-1 et on intègre 998 pas → on arrive à t_i - dt
+#     if start:
+#         # cas particulier : ligne 0, on repart des CI
+#         Xpp0, Ypp0, Xp0, Yp0 = model.init_fields()
+#         (Xpp, Ypp), (Xp, Yp) = model.integrate(Xpp0, Ypp0, Xp0, Yp0, n_steps=n_steps_first - 1)
+#     else:
+#         # ligne i-1 → intègre N_fs-1 pas → arrive à t_i - dt
+#         if custom:
+#             Xpp0,Ypp0,Xp0,Yp0 = model.init_fields(Xpp=x_past[0,0::2],Ypp=x_past[0,1::2])
+#             (cur_Xpp, cur_Ypp), (cur_Xp, cur_Yp) = model.integrate(
+#                 Xpp0, Ypp0, Xp0, Yp0, n_steps=n_steps_first)
+#             return cur_Xpp,cur_Ypp,cur_Xp,cur_Yp
+#         if second:
+#             Xpp0, Ypp0, Xp0, Yp0 = model.init_fields()
+#             (cur_Xpp, cur_Ypp), (cur_Xp, cur_Yp) = model.integrate(
+#                 Xpp0, Ypp0, Xp0, Yp0, n_steps=n_steps_first)
+#         else:
+#             Xp_prev2 = x_past[0, 0::2];  Yp_prev2 = x_past[0, 1::2]
+#             Xp_prev1 = x_past[1, 0::2];  Yp_prev1 = x_past[1, 1::2]
+#             (cur_Xpp, cur_Ypp), (cur_Xp, cur_Yp) = model.integrate(
+#                 Xp_prev2, Yp_prev2, Xp_prev1, Yp_prev1, n_steps=N_fs - 1)
 
-        (Xpp, Ypp), (Xp, Yp) = model.integrate(
-            cur_Xpp, cur_Ypp, cur_Xp, cur_Yp, n_steps=1)
-        # maintenant Xp/Yp = ref[i] à la précision machine, Xpp/Ypp = état à t_i - dt
-    return Xpp,Ypp,Xp,Yp
+#         (Xpp, Ypp), (Xp, Yp) = model.integrate(
+#             cur_Xpp, cur_Ypp, cur_Xp, cur_Yp, n_steps=1)
+#         # maintenant Xp/Yp = ref[i] à la précision machine, Xpp/Ypp = état à t_i - dt
+#     return Xpp,Ypp,Xp,Yp
 
 def m_step(Xpp, Ypp, Xp, Yp):
     """
@@ -270,9 +265,9 @@ def generate_observations(p, H):
 H = np.eye(44,44) #array([[1,0,0,0], [0,1,0,0]])
 H = H[2*(k_min_collocation-1):2*k_max_collocation,:] # on observe que les modes de 5 à 10 avec Re et Im donc 12 variables d'observations
 
-i_nan = np.random.choice(Npts, size=int(0.8*Npts), replace=False) # indices des observations à supprimer
+#i_nan = np.random.choice(Npts, size=int(0.8*Npts), replace=False) # indices des observations à supprimer
 
-y_obs = H @ Data_shell.T + np.random.multivariate_normal(np.zeros(p),R,size=(Npts,)).T # vrai observation 
+y_obs = H @ Data_shell.T + np.random.multivariate_normal(np.zeros(p),R,size=(Npts,)).T # observations bruitées 
 #y_obs[:,i_nan] = y_obs[:,i_nan]*np.nan
 
 # tiré des temps au hasard pour enlever des observations 
@@ -325,7 +320,7 @@ j_start = 2
 #     cur_Xpp, cur_Ypp, cur_Xp, cur_Yp, n_steps=1)
 
 
-amp = np.std(Data_shell, axis=0)
+#amp = np.std(Data_shell, axis=0)
 
 
 # initialisation de l'ensemble 
@@ -362,8 +357,10 @@ P_a_enkf[:,:,0] = np.cov(x_a_enkf_tmp)    # initial state covariance
 #     plt.ylabel('Xp and Yp')
 #     plt.legend()
 #     plt.savefig(SAVE + f"xy_start_enKF_{j}")
-lmb_inf = 0.2
-g = np.zeros((n,nb))
+
+# debut enKF
+lmb_inf = 0.2 # lambda pour l'inflation
+g = np.zeros((n,nb)) # coeff d'inflation
 for k in tqdm.tqdm(range(nb)): # forward in time #nb
     # prediction step
     # il faut un initialisation custom pour chaque Ne
@@ -386,27 +383,27 @@ for k in tqdm.tqdm(range(nb)): # forward in time #nb
                                             # c'est un moins dans le papier à verifier
         y_f_enkf_tmp[:,i] = H @ x_f_enkf_tmp[:,i] + np.random.multivariate_normal(np.zeros(p), R) ### A CACHER
     
-    ens_Xpp = fens_Xpp
-    ens_Ypp = fens_Ypp
-    ens_Xp  = fens_Xp
-    ens_Yp  = fens_Yp
+    # ens_Xpp = fens_Xpp
+    # ens_Ypp = fens_Ypp
+    # ens_Xp  = fens_Xp
+    # ens_Yp  = fens_Yp
 
-    P_f_enkf_tmp = np.cov(x_f_enkf_tmp) ### A CACHER
+    P_f_enkf_tmp = np.cov(x_f_enkf_tmp) ### covariance de l'ensemble 
     # Kalman gain
     
-    K_g = P_f_enkf_tmp @ H.T @ np.linalg.inv(H @ P_f_enkf_tmp @ H.T + R) ### A CACHER
+    K_g = P_f_enkf_tmp @ H.T @ np.linalg.inv(H @ P_f_enkf_tmp @ H.T + R) ### gain de Kalman
     # update step
     if(sum(np.isfinite(y_obs[:,k]))>0):
         for i in range(Ne):
-            x_a_enkf_tmp[:,i] = x_f_enkf_tmp[:,i] + K_g @ (y_obs[:,k] - y_f_enkf_tmp[:,i]) ### A CACHER
-        P_a_enkf_tmp = np.cov(x_a_enkf_tmp) ### A CACHER
+            x_a_enkf_tmp[:,i] = x_f_enkf_tmp[:,i] + K_g @ (y_obs[:,k] - y_f_enkf_tmp[:,i]) ### mise à jour de l'ensemble avec les observations
+        P_a_enkf_tmp = np.cov(x_a_enkf_tmp) ### covariance ensemble après mise à jour
         
         # inflation multiplicative
-        P_a_tilde[:,:,k] = (np.eye(n) - K_g @ H) @ P_f_enkf_tmp ### A CACHER
-        mu_n = np.mean(x_a_enkf_tmp, axis=1) ### A CACHER
+        P_a_tilde[:,:,k] = (np.eye(n) - K_g @ H) @ P_f_enkf_tmp ### cov posterior 
+        mu_n = np.mean(x_a_enkf_tmp, axis=1) ### moyenne pour inflation
 
         for j in range(n):
-                g[j,k] = max(1,1+lmb_inf*(P_f_enkf_tmp[j,j]-P_a_tilde[j,j,k])/P_f_enkf_tmp[j,j]) # terme d'inflation multiplicative pour chaque variable d'état ### A CACHER
+                g[j,k] = max(1,1+lmb_inf*(P_f_enkf_tmp[j,j]-P_a_tilde[j,j,k])/P_f_enkf_tmp[j,j]) # terme d'inflation multiplicative 
         
         for i in range(Ne):
             x_a_enkf_tmp[:,i] = g[:,k]*x_a_enkf_tmp[:,i] + (1-g[:,k])*mu_n # inflation multiplicative sur les membres de l'ensemble ### A CACHER
@@ -433,6 +430,8 @@ for k in tqdm.tqdm(range(nb)): # forward in time #nb
     ens_Xp  = x_a_enkf_tmp[0::2,:].T
     ens_Yp  = x_a_enkf_tmp[1::2,:].T
 
+
+############################# PLOTS ############################################################
 
 ### plot trajectories (true, observed, KF, EnKF)
 for i in range(N):
