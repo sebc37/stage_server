@@ -564,7 +564,7 @@ K = [k0*lmb**i for i in range(k_min,k_max)]
 torch.manual_seed(119)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-model = GOY_PINN(n_input=2,n_output=1,n_hidden=largeur_couche,n_layers=nb_couche)
+model = GOY_PINN(n_input=2,n_output=1,n_hidden=largeur_couche,n_layers=nb_couche,batch_size=1,ic_size=1)
 model.to(device)
 
 
@@ -641,11 +641,11 @@ DUDT = DUDT.cpu().detach().numpy()
 
 for i in range(U.shape[1]):
     plt.figure()
-    plt.plot(U[:,i],label=f'Predicted u{i}')
+    plt.plot(U[:,i],label=f'Prédiction de u{i}')
     plt.plot(U_exa[:,i],label=f'Exact u{i}')
-    plt.plot(DUDT[:,i],label = f"du/dt {i}")
-    plt.xlabel('Time')
-    plt.ylabel('Velocity')
+    #plt.plot(DUDT[:,i],label = f"du/dt {i}")
+    plt.xlabel('Temps')
+    plt.ylabel('u')
     plt.legend()
     plt.savefig(PATH + f"/prediction_u{i}.png") #_{int(ratio*100)}
 
@@ -655,18 +655,18 @@ for i in range(U.shape[1]):
 
 
 plt.figure()
-plt.plot(Total_loss[0],label='Total Loss')
-plt.plot(Total_loss[1],label='Physics Loss')
-plt.plot(Total_loss[2],label='Colocation Loss')
-plt.plot(Total_loss[3],label='Boundary Conditions Loss')
-plt.plot(Total_loss[4],label='initial Conditions Loss' )  
+plt.semilogy(Total_loss[0],label='Loss Total')
+plt.semilogy(Total_loss[1],label='Loss Physique')
+#plt.plot(Total_loss[2],label='Colocation Loss')
+plt.semilogy(Total_loss[3],label='Loss observations')
+#plt.plot(Total_loss[4],label='initial Conditions Loss' )  
 plt.xlabel('Iterations')
 plt.ylabel('Losses')
 plt.legend()
 plt.savefig(PATH + f"losses.png") #_{int(ratio*100)}
 
 plt.figure()
-plt.plot(np.log10(Total_loss[-3]),label='lmb bc')
+plt.plot(np.log10(Total_loss[-3]),label='lmb obs')
 plt.plot(np.log10(Total_loss[-2]),label='lmb phy')
 plt.xlabel('Iterations')
 plt.ylabel('Lambda')

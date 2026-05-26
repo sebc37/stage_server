@@ -515,10 +515,10 @@ print("RMSE:", rmse)
 
 for i in range(U.shape[1]):
     plt.figure()
-    plt.plot(U[:,i],label=f'Predicted u{i}')
+    plt.plot(U[:,i],label=f'Prédiction u{i}')
     plt.plot(U_exa[:,i],label=f'Exact u{i}')
-    plt.xlabel('Time')
-    plt.ylabel('Velocity')
+    plt.xlabel('Temps')
+    plt.ylabel('$\tilde{u}(k,t)$')
     plt.legend()
     plt.savefig(PATH + f"/prediction_u{i}.png") #_{int(ratio*100)}
 
@@ -528,12 +528,12 @@ for i in range(U.shape[1]):
 
 
 plt.figure()
-plt.plot(Total_loss[0],label='Total Loss')
-plt.plot(Total_loss[1],label='Physics Loss')
-plt.plot(Total_loss[2],label='Colocation Loss')
-plt.plot(Total_loss[3],label='Boundary Conditions Loss')
-plt.plot(Total_loss[4],label='initial Conditions Loss' )  
+plt.plot(Total_loss[0],label='Coût Total')
+plt.plot(Total_loss[1],label='Coût Physique')
+#plt.plot(Total_loss[2],label='Colocation Loss')
+plt.plot(Total_loss[3],label='Coût observations')
+#plt.plot(Total_loss[4],label='initial Conditions Loss' )  
 plt.xlabel('Iterations')
-plt.ylabel('Losses')
+plt.ylabel('Coût')
 plt.legend()
 plt.savefig(PATH + f"losses.png") #_{int(ratio*100)}

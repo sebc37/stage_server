@@ -57,26 +57,28 @@ def rk4(state0, ts):
 ts_dense = np.linspace(t0, t1, 10000)
 xyz0     = [8.0, 0.0, 30.0]
 traj     = rk4(xyz0, ts_dense)   # (2000, 3)
+#traj_bruit = traj + np.random.randn(*traj.shape) * 0.5   # add small noise to make it more realistic
 
 def true_xyz(t_tensor):
     """Interpolate ground-truth trajectory at query times (numpy-backed)."""
     t_np = t_tensor.detach().numpy().flatten()
-    xyz  = np.stack([np.interp(t_np, ts_dense, traj[:, i]) for i in range(3)], axis=1)
+    xyz  = np.stack([np.interp(t_np, ts_dense, traj[:, i]) for i in range(3)], axis=1) #traj
     return torch.tensor(xyz, dtype=torch.float32)
+
 
 # ─── Hyperparameters ─────────────────────────────────────────────────────────
 hamiltorch.set_random_seed(123)
 prior_std   = 1.0
-like_std    = 0.1
-step_size   = 0.00001       # small: Lorenz gradients are O(10-100) near the attractor
+like_std    = 1.0
+step_size   = 0.0001       # small: Lorenz gradients are O(10-100) near the attractor
 burn        = 200
-num_samples = 500
+num_samples = 5000
 L           = 100
-layer_sizes = [1, 32, 32, 3]   # t -> (x, y, z)
+layer_sizes = [1, 64, 64, 64, 64, 3]   # t -> (x, y, z)
 activation  = torch.tanh
 pde         = True
 pinns       = True          # warm-start with MAP/PINNs, then switch to HMC below
-epochs      = 80000
+epochs      = 2*80000
 tau_priors  = 1.0 / prior_std**2
 # tau_likes must be a list [obs_precision, ode_precision] when pde=True.
 # Lorenz RHS values are O(10-100), so a large ode precision explodes gradients.
@@ -117,11 +119,15 @@ class Net(nn.Module):
         self.l1 = nn.Linear(layer_sizes[0], layer_sizes[1])
         self.l2 = nn.Linear(layer_sizes[1], layer_sizes[2])
         self.l3 = nn.Linear(layer_sizes[2], layer_sizes[3])
-
+        self.l4 = nn.Linear(layer_sizes[3], layer_sizes[4])
+        self.l5 = nn.Linear(layer_sizes[4], layer_sizes[5])
+        
     def forward(self, x):
         x = self.activation(self.l1(x))
         x = self.activation(self.l2(x))
-        return self.l3(x)
+        x = self.activation(self.l3(x))
+        x = self.activation(self.l4(x))
+        return self.l5(x)
 
 net = Net(layer_sizes, activation).to(device)
 nets = [net]
@@ -213,19 +219,45 @@ fig, axes = plt.subplots(3, 1, figsize=(9, 9), sharex=True)
 for i, (ax, lbl, col) in enumerate(zip(axes, labels, colors)):
     mean = pred_xyz.mean(0)[:, i]
     std  = pred_xyz.std(0)[:, i]
-    ax.plot(t_np, xyz_np[:, i], 'r-', lw=2, label='Ground truth')
-    ax.plot(t_np, mean, color=col, lw=1.5, label='BPINN mean')
+    ax.plot(t_np, xyz_np[:, i], 'r-', lw=2, label='Vérité terrain')
+    ax.plot(t_np, mean, color=col, lw=1.5, label='Moyenne BPINN')
     ax.fill_between(t_np, mean - 2*std, mean + 2*std,
                     color=col, alpha=0.25, label='±2 std')
     ax.scatter(data['x_u'].cpu().numpy(),
                data['y_u'].cpu().numpy()[:, i],
                c='k', s=20, zorder=5, label='Obs. data')
+
+    # ── Points de collocation (résidus ODE) ──────────────────────────
+    t_col_np = data['x_f'].cpu().numpy().flatten()
+    # Évaluer u(t_col) pour récupérer la valeur de la composante i
+    with torch.no_grad():
+        pred_col = net(data['x_f']).cpu().numpy()[:, i]
+    ax.scatter(t_col_np, pred_col,
+               marker='|', c='purple', s=40, linewidths=0.8,
+               alpha=0.5, zorder=4, label='points de collocation')
+    # ─────────────────────────────────────────────────────────────────
+
     ax.set_ylabel(lbl, fontsize=12)
     ax.legend(fontsize=9)
     ax.set_xlim([t0, t1])
 
+# fig, axes = plt.subplots(3, 1, figsize=(9, 9), sharex=True)
+# for i, (ax, lbl, col) in enumerate(zip(axes, labels, colors)):
+#     mean = pred_xyz.mean(0)[:, i]
+#     std  = pred_xyz.std(0)[:, i]
+#     ax.plot(t_np, xyz_np[:, i], 'r-', lw=2, label='Ground truth')
+#     ax.plot(t_np, mean, color=col, lw=1.5, label='BPINN mean')
+#     ax.fill_between(t_np, mean - 2*std, mean + 2*std,
+#                     color=col, alpha=0.25, label='±2 std')
+#     ax.scatter(data['x_u'].cpu().numpy(),
+#                data['y_u'].cpu().numpy()[:, i],
+#                c='k', s=20, zorder=5, label='Obs. data')
+#     ax.set_ylabel(lbl, fontsize=12)
+#     ax.legend(fontsize=9)
+#     ax.set_xlim([t0, t1])
+
 axes[-1].set_xlabel('t', fontsize=12)
-plt.suptitle('Lorenz System — BPINNs (HMC)', fontsize=14)
+plt.suptitle('Système de Lorenz — BPINNs (HMC)', fontsize=14)
 plt.tight_layout()
 plt.savefig(PATH + 'lorenz_bpinns_timeseries.png', dpi=150)
 plt.show()
@@ -233,14 +265,37 @@ plt.show()
 # --- 3-D phase portrait ---
 fig3d = plt.figure(figsize=(8, 6))
 ax3d  = fig3d.add_subplot(111, projection='3d')
-ax3d.plot(xyz_np[:, 0], xyz_np[:, 1], xyz_np[:, 2], 'r-', lw=1, label='Ground truth')
+ax3d.plot(xyz_np[:, 0], xyz_np[:, 1], xyz_np[:, 2], 'r-', lw=1, label='Vérité terrain')
 ax3d.plot(pred_xyz.mean(0)[:, 0],
           pred_xyz.mean(0)[:, 1],
           pred_xyz.mean(0)[:, 2],
-          'b--', lw=1, label='BPINN mean')
+          'b--', lw=1, label='Moyenne BPINN')
 ax3d.set_xlabel('x'); ax3d.set_ylabel('y'); ax3d.set_zlabel('z')
-ax3d.set_title('Lorenz attractor — phase portrait')
+ax3d.set_title('Attracteur de Lorenz — portrait de phase')
 ax3d.legend()
 plt.tight_layout()
 plt.savefig(PATH + 'lorenz_bpinns_phase.png', dpi=150)
 plt.show()
+
+# ── RMSE par composante en fonction du temps ──────────────────────────────────
+rmse = np.sqrt(((pred_xyz.mean(0) - xyz_np) ** 2))   # (N_val, 3)  — erreur absolue par pas
+
+
+fig_rmse, ax_rmse = plt.subplots(figsize=(9, 3))
+for i, (lbl, col) in enumerate(zip(labels, colors)):
+    ax_rmse.plot(t_np, rmse[:, i], color=col, lw=1.5, label=lbl)
+
+ax_rmse.set_xlabel('t', fontsize=12)
+ax_rmse.set_ylabel('Erreur absolue (|ŷ − y|)', fontsize=11)
+ax_rmse.set_title('Erreur point-à-point — BPINNs vs Vérité terrain', fontsize=13)
+ax_rmse.legend(fontsize=10)
+ax_rmse.set_xlim([t0, t1])
+ax_rmse.set_yscale('log')          # log-scale utile car l'erreur diverge sur l'attracteur
+plt.tight_layout()
+plt.savefig(PATH + 'lorenz_bpinns_rmse.png', dpi=150)
+plt.show()
+
+# ── RMSE global (scalaire) par composante ─────────────────────────────────────
+for i, lbl in enumerate(labels):
+    val = np.sqrt(((pred_xyz.mean(0)[:, i] - xyz_np[:, i]) ** 2).mean())
+    print(f'RMSE {lbl} : {val:.4f}')

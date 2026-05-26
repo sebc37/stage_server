@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 import tqdm
 from goy import GoyModel
-
+import matplotlib.gridspec as gridspec
 
 
 def filter_mode(X,mode_min:int,mode_max:int,t_min:int,ratio:float,seed):
@@ -103,7 +103,7 @@ MS = np.array([(0.05**2)*np.mean(np.abs(shell_array[:,k])**2 ) for k in range(0,
 ### parameters
 n     = 44 # state size  on veut estimer les Un de 1 à 22 avec Re et Im donc 44 variables d'état
 p     = 2*(k_max_collocation-k_min_collocation + 1) # On observe Un n=6,7,8 avec Re et Im donc variables d'observations 
-nb    = Npts # number of times
+nb    = 30000 # number of times
 time  = np.array(range(nb)) # time vector
 var_Q = 0.0 # error variance of the model (in Kalman)
 var_R = 0.1 # error variance of the observations (in Kalman)
@@ -441,8 +441,8 @@ for i in range(N):
         
         plt.plot(y_obs[2*i-2*(k_min_collocation-1),0:nb], '.k',alpha=0.3, label=f'Observations ($y {i+1}$)')
         plt.plot(x_a_enkf[2*i,0:nb], 'r', label=f'EnKF ($U^a {i+1}$)')
-        plt.plot(Data_shell.T[2*i,j_start:nb+j_start], 'b', label=f'True state ($U_{i+1}$)')
-        plt.xlabel('$time$')
+        plt.plot(Data_shell.T[2*i,j_start:nb+j_start], 'b', label=f'Vérité terrain ($U_{i+1}$)')
+        plt.xlabel('$temps$')
         plt.ylabel(f'$\Re(U_{i+1})$')
         plt.legend()
         
@@ -450,12 +450,49 @@ for i in range(N):
         plt.figure()
         plt.fill_between(time[0:nb], x_a_enkf[2*i,0:nb] - 1.96*np.sqrt(P_a_tilde[2*i,2*i,0:nb]), x_a_enkf[2*i,0:nb] + 1.96*np.sqrt(P_a_tilde[2*i,2*i,0:nb]), facecolor='red', alpha=0.4)
         plt.plot(x_a_enkf[2*i,0:nb], 'r', label=f'EnKF ($U^a_{i+1}$)')
-        plt.plot(Data_shell.T[2*i,j_start:nb+j_start], 'b', label=f'True state ($U_{i+1}$)')
-        plt.xlabel('$time$')
+        plt.plot(Data_shell.T[2*i,j_start:nb+j_start], 'b', label=f'Vérité terrain ($U_{i+1}$)')
+        plt.xlabel('$temps$')
         plt.ylabel(f'$ \Re(U_{i+1})$')
         plt.legend()
     plt.savefig(SAVE + f"fig1enKF_{i}.png",format='png',dpi=400)
     plt.close()
+
+shells = [0, 5, 12]  # indices 0-based pour shells 1, 6, 13
+shell_labels = [1, 6, 13]
+
+fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
+fig.suptitle('trajectoires EnKF — couches 1, 6 and 13', fontsize=13)
+
+for ax, i, label in zip(axes, shells, shell_labels):
+    # Confidence interval
+    ax.fill_between(
+        time[0:nb],
+        x_a_enkf[2*i, 0:nb] - 1.96 * np.sqrt(P_a_tilde[2*i, 2*i, 0:nb]),
+        x_a_enkf[2*i, 0:nb] + 1.96 * np.sqrt(P_a_tilde[2*i, 2*i, 0:nb]),
+        facecolor='red', alpha=0.4, label='95% IC'
+    )
+
+    # Observations (only for collocation shells)
+    if (i >= k_min_collocation - 1) and (i < k_max_collocation):
+        ax.plot(
+            y_obs[2*i - 2*(k_min_collocation-1), 0:nb],
+            '.k', alpha=0.3, label=f'Observations ($y_{{{label}}}$)'
+        )
+
+    # EnKF and true state
+    ax.plot(x_a_enkf[2*i, 0:nb],       'r',  label=f'EnKF ($U^a_{{{label}}}$)')
+    ax.plot(Data_shell.T[2*i, j_start:nb+j_start], 'b', label=f'Vérité terrain ($U_{{{label}}}$)')
+
+    ax.set_ylabel(f'$\\Re(U_{{{label}}})$')
+    if i != shells[1]: 
+        ax.legend(loc='upper right', fontsize=8)
+    else:
+        ax.legend(loc='lower right', fontsize=8)
+
+axes[-1].set_xlabel('$temps$')
+plt.tight_layout()
+plt.savefig(SAVE + "fig1enKF_shells_1_6_13.png", format='png')
+plt.close()
     # plt.figure()
     # plt.plot(time[0:nb],g[i,0:nb],label=f'inflation factor g for variable $U_{i//2}$')
     # plt.xlabel('time')
@@ -483,10 +520,10 @@ print('RMSE(obs):', np.sqrt(np.mean((y_obs[:,0:nb] - Data_shell.T[range(2*(k_min
 print('RMSE(EnKF):', np.sqrt(np.mean((x_a_enkf[:,0:nb] - Data_shell.T[:,0:nb])**2,1))) 
 
 plt.figure()
-plt.semilogy([i for i in range(int(n/2))],np.mean(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2,1),label='Truth')
-plt.semilogy([i for i in range(int(n/2))],np.mean(x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2,1),label='pred')
+plt.semilogy([i for i in range(int(n/2))],np.mean(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2,1),label='Vérité terrain')
+plt.semilogy([i for i in range(int(n/2))],np.mean(x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2,1),label='Prédiction')
 plt.semilogy([i for i in range(int(n/2))],[k**(-2/3) for k in K],'--',alpha=0.5)
-plt.xlabel('shell number')
+plt.xlabel('numéro de couches')
 plt.ylabel('$log(<|U_n|^2>_T)$')
 plt.legend()
 plt.savefig(SAVE + "log_variance_enKF.png",format='png')
@@ -494,9 +531,9 @@ plt.close()
 
 
 plt.figure()
-plt.semilogy([i for i in range(int(n/2))],(np.mean((Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2)**2 ,1))/np.mean((Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2),1)**2,label='Truth')
-plt.semilogy([i for i in range(int(n/2))],(np.mean((x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2)**2 ,1))/np.mean((x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2),1)**2,label='pred')
-plt.xlabel('shell number')
+plt.semilogy([i for i in range(int(n/2))],(np.mean((Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2)**2 ,1))/np.mean((Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2),1)**2,label='Vérité terrain')
+plt.semilogy([i for i in range(int(n/2))],(np.mean((x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2)**2 ,1))/np.mean((x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2),1)**2,label='Prédiction')
+plt.xlabel('numéro de couches')
 plt.ylabel('$log({<|U_n|^4>_T}/{(<|U_n|^2>_T)^2})$')
 plt.legend()
 plt.savefig(SAVE + "log_kurtosis_enKF.png",format='png')
@@ -520,7 +557,7 @@ for j in range(0,n,2):
     plt.errorbar([j for j in range(cut)], _mean, _std, linestyle='None', label=f'var {j}',marker='^', color='blue')
     
     plt.xlabel('time')
-    plt.ylabel('mean and std of EnKF estimates')
+    plt.ylabel(f'moyenne et ecart-type de $U_{j//2}$')
     plt.legend()
     plt.savefig(SAVE + f"mean_enKF_over_time_{j}.png",format='png')
     plt.close()
@@ -528,7 +565,50 @@ for j in range(0,n,2):
 
 plt.figure()
 plt.semilogy([i for i in range(int(n/2))], np.sqrt(np.mean((np.sqrt(x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2) - np.sqrt(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2))**2,1))/np.mean(np.sqrt(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2)**2,1), marker='o')
-plt.xlabel('shell number')
+plt.xlabel('numéro de couches')
 plt.ylabel('RMSE')
 plt.savefig(SAVE + "RMSE_enKF.png",format='png')
+plt.close()
+
+fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+
+# --- Plot 1 : log variance ---
+ax = axes[0]
+ax.semilogy([i for i in range(int(n/2))],
+            np.mean(Data_shell.T[0::2, 0:nb]**2 + Data_shell.T[1::2, 0:nb]**2, 1),
+            label='Vérité terrain')
+ax.semilogy([i for i in range(int(n/2))],
+            np.mean(x_a_enkf[0::2, 0:nb]**2 + x_a_enkf[1::2, 0:nb]**2, 1),
+            label='Prédiction')
+ax.semilogy([i for i in range(int(n/2))],
+            [k**(-2/3) for k in K], '--', alpha=0.5)
+ax.set_xlabel('Numéro de couches')
+ax.set_ylabel('$\\log(\\langle|U_n|^2\\rangle_T)$')
+ax.legend()
+
+# --- Plot 2 : log kurtosis ---
+ax = axes[1]
+truth_var  = np.mean(Data_shell.T[0::2, 0:nb]**2 + Data_shell.T[1::2, 0:nb]**2, 1)
+truth_var2 = np.mean((Data_shell.T[0::2, 0:nb]**2 + Data_shell.T[1::2, 0:nb]**2)**2, 1)
+pred_var   = np.mean(x_a_enkf[0::2, 0:nb]**2 + x_a_enkf[1::2, 0:nb]**2, 1)
+pred_var2  = np.mean((x_a_enkf[0::2, 0:nb]**2 + x_a_enkf[1::2, 0:nb]**2)**2, 1)
+
+ax.semilogy([i for i in range(int(n/2))], truth_var2 / truth_var**2, label='Vérité terrain')
+ax.semilogy([i for i in range(int(n/2))], pred_var2  / pred_var**2,  label='Prédiction')
+ax.set_xlabel('Numéro de couches')
+ax.set_ylabel('$\\log\\left(\\frac{\\langle|U_n|^4\\rangle_T}{\\langle|U_n|^2\\rangle_T^2}\\right)$')
+ax.legend()
+
+# --- Plot 3 : RMSE ---
+ax = axes[2]
+amp_pred  = np.sqrt(x_a_enkf[0::2, 0:nb]**2 + x_a_enkf[1::2, 0:nb]**2)
+amp_truth = np.sqrt(Data_shell.T[0::2, 0:nb]**2 + Data_shell.T[1::2, 0:nb]**2)
+rmse = np.sqrt(np.mean((amp_pred - amp_truth)**2, 1)) / np.mean(amp_truth**2, 1)
+
+ax.semilogy([i for i in range(int(n/2))], rmse, marker='o')
+ax.set_xlabel('Numéro de couches')
+ax.set_ylabel('RMSE')
+
+plt.tight_layout()
+plt.savefig(SAVE + "diagnostics_enKF.png", format='png')
 plt.close()
