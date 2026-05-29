@@ -461,7 +461,7 @@ shells = [0, 5, 12]  # indices 0-based pour shells 1, 6, 13
 shell_labels = [1, 6, 13]
 
 fig, axes = plt.subplots(3, 1, figsize=(12, 10), sharex=True)
-fig.suptitle('trajectoires EnKF — couches 1, 6 and 13', fontsize=13)
+fig.suptitle('trajectoires EnKF — couches 1, 6 et 13', fontsize=13)
 
 for ax, i, label in zip(axes, shells, shell_labels):
     # Confidence interval
@@ -522,9 +522,9 @@ print('RMSE(EnKF):', np.sqrt(np.mean((x_a_enkf[:,0:nb] - Data_shell.T[:,0:nb])**
 plt.figure()
 plt.semilogy([i for i in range(int(n/2))],np.mean(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2,1),label='Vérité terrain')
 plt.semilogy([i for i in range(int(n/2))],np.mean(x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2,1),label='Prédiction')
-plt.semilogy([i for i in range(int(n/2))],[k**(-2/3) for k in K],'--',alpha=0.5)
+plt.semilogy([i for i in range(int(n/2))],[k**(-2/3) for k in K],'--',alpha=0.5,label='$k^{-2/3}$')
 plt.xlabel('numéro de couches')
-plt.ylabel('$log(<|U_n|^2>_T)$')
+plt.ylabel(r'$\log(\langle|U_n|^2\rangle_T)$')
 plt.legend()
 plt.savefig(SAVE + "log_variance_enKF.png",format='png')
 plt.close()
@@ -534,7 +534,7 @@ plt.figure()
 plt.semilogy([i for i in range(int(n/2))],(np.mean((Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2)**2 ,1))/np.mean((Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2),1)**2,label='Vérité terrain')
 plt.semilogy([i for i in range(int(n/2))],(np.mean((x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2)**2 ,1))/np.mean((x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2),1)**2,label='Prédiction')
 plt.xlabel('numéro de couches')
-plt.ylabel('$log({<|U_n|^4>_T}/{(<|U_n|^2>_T)^2})$')
+plt.ylabel(r'$\log\!\left(\frac{\langle|U_n|^4\rangle_T}{\langle|U_n|^2\rangle_T^2}\right)$')
 plt.legend()
 plt.savefig(SAVE + "log_kurtosis_enKF.png",format='png')
 plt.close()
@@ -564,7 +564,7 @@ for j in range(0,n,2):
 
 
 plt.figure()
-plt.semilogy([i for i in range(int(n/2))], np.sqrt(np.mean((np.sqrt(x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2) - np.sqrt(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2))**2,1))/np.mean(np.sqrt(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2)**2,1), marker='o')
+plt.semilogy([i for i in range(int(n/2))], np.sqrt ( np.mean((np.sqrt(x_a_enkf[0::2,0:nb]**2 + x_a_enkf[1::2,0:nb]**2) - np.sqrt(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2))**2,1))/np.mean(np.sqrt(Data_shell.T[0::2,0:nb]**2 + Data_shell.T[1::2,0:nb]**2)**2,1), marker='o')
 plt.xlabel('numéro de couches')
 plt.ylabel('RMSE')
 plt.savefig(SAVE + "RMSE_enKF.png",format='png')
@@ -583,7 +583,7 @@ ax.semilogy([i for i in range(int(n/2))],
 ax.semilogy([i for i in range(int(n/2))],
             [k**(-2/3) for k in K], '--', alpha=0.5)
 ax.set_xlabel('Numéro de couches')
-ax.set_ylabel('$\\log(\\langle|U_n|^2\\rangle_T)$')
+ax.set_ylabel(r'$\log(\langle|U_n|^2\rangle_T)$')
 ax.legend()
 
 # --- Plot 2 : log kurtosis ---
@@ -596,7 +596,7 @@ pred_var2  = np.mean((x_a_enkf[0::2, 0:nb]**2 + x_a_enkf[1::2, 0:nb]**2)**2, 1)
 ax.semilogy([i for i in range(int(n/2))], truth_var2 / truth_var**2, label='Vérité terrain')
 ax.semilogy([i for i in range(int(n/2))], pred_var2  / pred_var**2,  label='Prédiction')
 ax.set_xlabel('Numéro de couches')
-ax.set_ylabel('$\\log\\left(\\frac{\\langle|U_n|^4\\rangle_T}{\\langle|U_n|^2\\rangle_T^2}\\right)$')
+ax.set_ylabel(r'$\log\!\left(\frac{\langle|U_n|^4\rangle_T}{\langle|U_n|^2\rangle_T^2}\right)$')
 ax.legend()
 
 # --- Plot 3 : RMSE ---
@@ -605,7 +605,7 @@ amp_pred  = np.sqrt(x_a_enkf[0::2, 0:nb]**2 + x_a_enkf[1::2, 0:nb]**2)
 amp_truth = np.sqrt(Data_shell.T[0::2, 0:nb]**2 + Data_shell.T[1::2, 0:nb]**2)
 rmse = np.sqrt(np.mean((amp_pred - amp_truth)**2, 1)) / np.mean(amp_truth**2, 1)
 
-ax.semilogy([i for i in range(int(n/2))], rmse, marker='o')
+ax.semilogy([i for i in range(int(n/2))], rmse, marker='o',linestyle='None')
 ax.set_xlabel('Numéro de couches')
 ax.set_ylabel('RMSE')
 

@@ -104,20 +104,21 @@ class initials_variables_data(Dataset):
 
 # classe pour transformer les données en jeu de donnée des conditions de bord 
 class boundary_variables_data(Dataset):
-    def __init__(self,X_boundary,Npts,time,f,dt):
+    def __init__(self,X_boundary,Npts,time,f,dt,mask):
         
         #N_fs = int(1/((f-0.1)*dt))
-        self.X_boundary = torch.from_numpy(X_boundary[0:Npts,:])
+        self.mask = mask    
+        self.X_boundary = torch.from_numpy(X_boundary[self.mask,:]) #[0:Npts,:]
         self.nb_k = np.shape(X_boundary)[1]
         self.nb_t = np.shape(X_boundary)[0]
        
-        time = torch.arange(0.1*time,time,0.9*time/self.nb_t,dtype=torch.float32) #(time/f)*1/N_fs  #10*(f-0.1)*dt
+        time = torch.arange(0.1*time,time,0.9*time/Npts,dtype=torch.float32) #(time/f)*1/N_fs  #10*(f-0.1)*dt
         shell = torch.arange(0,self.X_boundary.shape[1],1,dtype=torch.float32)
-        grid_shell,grid_time = torch.meshgrid(shell,time,indexing="xy")
-        grid_shell = grid_shell.T.contiguous().view(Npts*self.X_boundary.shape[1],1)
-        grid_time = grid_time.T.contiguous().view(Npts*self.X_boundary.shape[1],1)
-        u_bc = torch.tensor(X_boundary).T.contiguous().view(Npts*self.X_boundary.shape[1],1)
-        self.tensor_data_bc = torch.stack((grid_shell,grid_time,u_bc),1).view(Npts*self.X_boundary.shape[1],3)
+        grid_shell,grid_time = torch.meshgrid(shell,time[mask],indexing="xy")
+        grid_shell = grid_shell.T.contiguous().view(len(self.mask)*self.X_boundary.shape[1],1) #Npts*self.X_boundary.shape[1]
+        grid_time = grid_time.T.contiguous().view(len(self.mask)*self.X_boundary.shape[1],1) #Npts*self.X_boundary.shape[1]
+        u_bc = torch.tensor(X_boundary[self.mask,:]).T.contiguous().view(len(self.mask)*self.X_boundary.shape[1],1) #Npts*self.X_boundary.shape[1]
+        self.tensor_data_bc = torch.stack((grid_shell,grid_time,u_bc),1).view(len(self.mask)*self.X_boundary.shape[1],3) #Npts*self.X_boundary.shape[1]
         
         ############################### version boucle long ###############################
         # self.tensor_data_bc_bis = torch.ones((self.nb_k*self.nb_t,3), dtype=torch.float32) #columns: k, t, u
@@ -267,29 +268,29 @@ class DynamicLossWeighter:
                 loss, model_params,
                 retain_graph=True, create_graph=False, allow_unused=True
             )
-            print("shape : " , len(grads))
+            #print("shape : " , len(grads))
             total = sum(
                 g.norm() ** 2
                 for g in grads if g is not None
             )
-            for g in grads:
-                print("type of g : ", type(g))
-                print(torch.mean(g))
+            #for g in grads:
+                #print("type of g : ", type(g))
+                #print(torch.mean(g))
             return total.sqrt()
 
         #norm_ic = grad_norm(loss_ic)
         norm_bc = grad_norm(loss_bc)
         norm_r  = grad_norm(loss_r)
-        print("norme bc : " , norm_bc, type(norm_bc))
-        print("norme phy : ",norm_r, type(norm_r))
+        #print("norme bc : " , norm_bc, type(norm_bc))
+        #print("norme phy : ",norm_r, type(norm_r))
         total =  + norm_bc + norm_r #+norm_ic # dénominateur commun du numérateur
 
         # Formules de l'image
         lambda_ic_hat = 0#total / norm_ic
         lambda_bc_hat = total / norm_bc
         lambda_r_hat  = total / norm_r
-        print("lmb bc pondéré : ",lambda_bc_hat,type(lambda_bc_hat))
-        print("lmb phy pondéré : ",lambda_r_hat,type(lambda_r_hat))
+        #print("lmb bc pondéré : ",lambda_bc_hat,type(lambda_bc_hat))
+        #print("lmb phy pondéré : ",lambda_r_hat,type(lambda_r_hat))
         return  lambda_bc_hat, lambda_r_hat ,lambda_ic_hat
 
     def update(self, loss_ic, loss_bc, loss_r, model_params):
@@ -310,8 +311,8 @@ class DynamicLossWeighter:
 
     def weighted_loss(self, loss_ic, loss_bc, loss_r):
         """Retourne la loss totale pondérée."""
-        print("lmb used bc : ",self.lambda_bc,type(self.lambda_bc))
-        print("lmb used phy : ",self.lambda_r,type(self.lambda_r))
+        #print("lmb used bc : ",self.lambda_bc,type(self.lambda_bc))
+        #print("lmb used phy : ",self.lambda_r,type(self.lambda_r))
         return (
             #self.lambda_ic * loss_ic +
             self.lambda_bc * loss_bc +

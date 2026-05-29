@@ -16,7 +16,7 @@ import argparse
 
 class Train_PINN():
 
-    def __init__(self,learning_rate,nbr_iteration,w_1,w_2,w_3,w_4,iteration=True,epoch=1000,physic=True,collocation=True,initial=True,normalize_phy=True,inline_phy=True):
+    def __init__(self,learning_rate,nbr_iteration,w_1,w_2,w_3,w_4,sample_phy,iteration=True,epoch=1000,physic=True,collocation=True,initial=True,normalize_phy=True,inline_phy=True,):
         self.learning_rate = learning_rate
         self.nbr_iteration = nbr_iteration
         self.w_1 = w_1
@@ -31,6 +31,7 @@ class Train_PINN():
         self.initial = initial
         self.normalize_phy = normalize_phy
         self.inline_phy = inline_phy
+        self.sample_phy = sample_phy
 
     def train(self):
 
@@ -60,6 +61,7 @@ class Train_PINN():
                 boundary_train_data = boundary_train_dataset.tensor_data_bc.to(device)#torch.tensor(boundary_rows, dtype=torch.float32)
                 u_pd_bou = model(boundary_train_data[:, 0:2]).to(device)
                 u_exa_bou = boundary_train_data[:,2:3]
+                #print(u_pd_bou.shape)
                 loss_boundary_conditions = self.w_2*torch.mean((u_pd_bou-u_exa_bou)**2).to(device)
 
 
@@ -97,8 +99,8 @@ class Train_PINN():
 
                 ################# CALCUL LOSS PHYSIC ################################
                 if self.physic:
-                    print("shape u_t : ",u_t.shape)
-                    print("shape u_pd : ",u_pd.shape)
+                    # print("shape u_t : ",u_t.shape)
+                    # print("shape u_pd : ",u_pd.shape)
                     
                     if self.inline_phy:
                         
@@ -173,15 +175,20 @@ class Train_PINN():
                         # print(GOY_physics_.shape)
                     else:
                         
-                        u_pd = u_pd.view(2*k_max-k_min,Npts).T
+                        u_pd = u_pd.view(2*k_max-k_min,Npts).T #Npts
                         u_t = u_t.view(2*k_max-k_min,Npts).T
-                        u_pd_im = u_pd[:,1::2]
-                        u_pd_real = u_pd[:,::2]
-                        u_t_im = u_t[:,1::2]
-                        u_t_real = u_t[:,::2]
+                        u_t_phy = u_t[self.sample_phy,:]
+                        u_pd_phy = u_pd[self.sample_phy,:]
+                        u_pd_im = u_pd_phy[:,1::2]
+                        u_pd_real = u_pd_phy[:,::2]
+                        u_t_im = u_t_phy[:,1::2]
+                        u_t_real = u_t_phy[:,::2]
+                        # print(u_pd_im.shape)
+                        # print(u_t_im.shape)
+                
                         # on veut calculer la loss physique sur le shells où il y a des collocations points
-                        GOY_physics_im = torch.zeros(Npts,k_max).to(device)
-                        GOY_physics_real = torch.zeros(Npts,k_max).to(device)
+                        GOY_physics_im = torch.zeros(len(self.sample_phy),k_max).to(device)
+                        GOY_physics_real = torch.zeros(len(self.sample_phy),k_max).to(device)
 
                         # calcul sur les premiers modes
                         GOY_physics_im[:,0] = (u_t_im[:,0] - K[0]*(u_pd_real[:,1]*u_pd_real[:,2] - u_pd_im[:,1]*u_pd_im[:,2]) 
@@ -325,8 +332,8 @@ class Train_PINN():
                              GOY_physics[:,i-k_min_phy] = du_dt[:,i] -K[i]*u_pd[:,i+1]*u_pd[:,i+2] +K[i]*eps/lmb*u_pd[:,i-1]*u_pd[:,i+1] + K[i]*((eps-1)/lmb**2)*u_pd[:,i-2]*u_pd[:,i-1] + nu*K[i]*K[i]*u_pd[:,i]
                             
                         loss_physics = loss_physics + self.w_4*torch.mean(GOY_physics**2)
-        print(iteration)
-        print(total_loss)
+        # print(iteration)
+        # print(total_loss)
             
             
         return loss,loss_physics_tracker,loss_colocation_tracker,loss_boundary_conditions_tracker,loss_initial_conditions_tracker,lmb_tracker_bc,lmb_tracker_phy,u_t
@@ -529,11 +536,13 @@ Data_filtered, Data_train, mean, Var_mode, Std_mode, perc, = filter_mode(Data_sh
 
 #Data_shell = reduced_center(Data_shell,mean,Std_mode) # centré réduit tous les modes 
 Data_ic = Data_shell[0,:] # prends tous le spoints en t=0
+random_samples = np.random.choice(Npts, size=18000, replace=False) # prends 18000 points de la partie filtrée pour les collocation points
 Data_bc = Data_shell[:,k_bc_min:2*k_bc_max] # prends tous les points de bords (shell allant de 0->3 avec 3 shell de forçage)
-
+print(Data_bc.shape)
 print("Moyenne de l'ensemble des mode",np.mean(Data_shell))
 print("std de tous les modes ", np.std(Data_shell))
 
+random_samples_phy = np.random.choice(Npts, size=18000, replace=False)
 
 #########  carateristics of the shell model ############
 
@@ -579,10 +588,11 @@ t_max = time # tmax pour la grille
 
 #point_grille = Npts-debut
 initial_train_dataset = initials_variables_data(Data_ic,nbr_initial_t,k_min,k_max,t_0=t_min)
-boundary_train_dataset = boundary_variables_data(X_boundary=Data_bc,Npts=Npts,time=time,f=f,dt=dt)
+boundary_train_dataset = boundary_variables_data(X_boundary=Data_bc,Npts=Npts,time=time,f=f,dt=dt,mask=random_samples)
 colocation_dataset = colocations_variables_data(Data_train)
 grid_dataset = grid_data(k_min,k_max,t_min,t_max,Npts=Npts)
 
+#grid_test = grid_data(0,22,t_min,t_max,Npts=Npts)
 
 batch_size_bc = int(0.01*Npts)
 batch_size_cl = int(0.1*colocation_dataset.nb_colocation_pnt)
@@ -617,38 +627,70 @@ Dataloader_grid = DataLoader(grid_dataset,batch_sampler=sampler_grid)
 
 
 learning_rate,nbr_iteration,w_1,w_2,w3,w_4 = 0.001,nbr_iteration,1,1,1,1
-t = Train_PINN(learning_rate,nbr_iteration,w_1,w_2,w3,w_4,
+t = Train_PINN(learning_rate,nbr_iteration,w_1,w_2,w3,w_4,sample_phy=random_samples_phy,
                physic=physic,initial=initial,collocation=collocation,
                normalize_phy= normalize_phy,inline_phy=inline_phy)
 Total_loss = t.train()
 model.eval().to(device)
 
 U = model(grid_dataset.grid.to(device))
+total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+print(f'Total number of parameters: {total_params}')
 U_split = torch.split(U,Npts)
 U = torch.cat(tuple(k for k in U_split),1).to(device)
 U = U.cpu().detach().numpy()#.detach().numpy().reshape(t_max-t_min,k_max-k_min)
 U_exa = Data_shell[0:Npts,k_min:2*k_max]
 
-square_error = (U-U_exa)**2
-rmse = np.sqrt(np.mean(square_error))
+square_error = ((np.sqrt(U[:,0::2]**2 + U[:,1::2]**2) - np.sqrt(U_exa[:,0::2]**2 + U_exa[:,1::2]**2))**2)
+amp = np.sqrt(U[0:Npts,0::2]**2 + U[0:Npts,1::2]**2) 
+amp_exa = np.sqrt(U_exa[0:Npts,0::2]**2 + U_exa[0:Npts,1::2]**2)  
+rmse = np.sqrt(np.mean((amp - amp_exa)**2,0))/np.mean(amp_exa,0)   
+#rmse = np.sqrt(np.mean(square_error,0))/(np.mean(np.sqrt(U_exa[:,0::2]**2 + U_exa[:,1::2]**2),0))
 print("RMSE:", rmse)
-
+plt.figure()
+plt.semilogy(rmse,label='RMSE',marker='o',linestyle='None')
+plt.xlabel('numéro de couche')
+plt.ylabel('RMSE')
+plt.savefig(PATH + f"RMSE.png") #_{int(ratio*100)}
 du_dt = Total_loss[-1]
 
 du_split = torch.split(du_dt,Npts)
 DUDT = torch.cat(tuple(k for k in du_split),1)
 DUDT = DUDT.cpu().detach().numpy()
 
+idx_sample = np.random.choice(random_samples, size=10, replace=False)
+idx_sample_phy = np.random.choice(random_samples_phy, size=10, replace=False)
 for i in range(U.shape[1]):
     plt.figure()
-    plt.plot(U[:,i],label=f'Prédiction de u{i}')
     plt.plot(U_exa[:,i],label=f'Exact u{i}')
+    plt.plot(U[:,i],label=f'Prédiction de u{i}')
+   
+    plt.plot(idx_sample,U_exa[idx_sample,i],label=f'Points de collocation u{i}',marker='o',linestyle='None')
+    plt.plot(idx_sample_phy,[0 for j in range(len(idx_sample_phy))],label=f'Résidus u{i}',marker='x',linestyle='None')
     #plt.plot(DUDT[:,i],label = f"du/dt {i}")
     plt.xlabel('Temps')
     plt.ylabel('u')
     plt.legend()
     plt.savefig(PATH + f"/prediction_u{i}.png") #_{int(ratio*100)}
 
+
+fig, axes = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
+
+indices = [0, 10, 24]  # U1, U6, U13 (numérotés à partir de 0)
+labels  = [1, 6, 13]
+
+for ax, i, lbl in zip(axes, indices, labels):
+    ax.plot(U_exa[:, i],                                 label=f'Exact u{lbl}')
+    ax.plot(U[:, i],                                     label=f'Prédiction de u{lbl}')
+    ax.plot(idx_sample,     U_exa[idx_sample, i],        label=f'Points de collocation u{lbl}', marker='o', linestyle='None')
+    ax.plot(idx_sample_phy, [0]*len(idx_sample_phy),     label=f'Résidus u{lbl}',               marker='x', linestyle='None')
+    ax.set_ylabel(f'u{lbl}')
+    ax.legend()
+
+axes[-1].set_xlabel('Temps')
+fig.tight_layout()
+plt.savefig(PATH + "/prediction_u1_u6_u13.png")
+plt.show()
 
 
 #torch.save(model.state_dict(),'/Odyssey/private/s26calme/code_stage/')
@@ -666,9 +708,48 @@ plt.legend()
 plt.savefig(PATH + f"losses.png") #_{int(ratio*100)}
 
 plt.figure()
-plt.plot(np.log10(Total_loss[-3]),label='lmb obs')
-plt.plot(np.log10(Total_loss[-2]),label='lmb phy')
+plt.semilogy(Total_loss[-3],label='lmb obs')
+plt.semilogy(Total_loss[-2],label='lmb phy')
 plt.xlabel('Iterations')
 plt.ylabel('Lambda')
 plt.legend()
 plt.savefig(PATH + f"lambda.png") #_{int(ratio*100)}
+
+
+n  = U_exa.shape[1]    # nb de composantes réelles (re + im par couche)
+nb = U_exa.shape[0]        # nb de pas de temps
+
+# U_exa et U sont de shape (temps, couches) → on transpose pour avoir (couches, temps)
+Exa = U_exa.T   # shape (n/2, nb)
+Pred = U.T      # shape (n/2, nb)
+
+#K = range(1, n // 2 + 1)   # numéro de couche (pour la loi k^{-2/3})
+
+# ── Variance log ──────────────────────────────────────────────────────────────
+fig, ax = plt.subplots()
+ax.semilogy(range(n // 2), np.mean(Exa[0::2,:] ** 2 + Exa[1::2,:]**2,  axis=1), label='Vérité terrain')
+ax.semilogy(range(n // 2), np.mean(Pred[0::2,:] ** 2 + Pred[1::2,:]**2, axis=1), label='Prédiction')
+ax.semilogy(range(n // 2), [k ** (-2/3) for k in K], '--', alpha=0.5, label='$k^{-2/3}$')
+ax.set_xlabel('Numéro de couche')
+ax.set_ylabel(r'$\log(\langle|U_n|^2\rangle_T)$')
+ax.legend()
+fig.tight_layout()
+plt.savefig(PATH + "/log_variance.png", format='png')
+plt.close()
+
+# ── Kurtosis log ──────────────────────────────────────────────────────────────
+var_exa  = np.mean(Exa[0::2,:]**2 + Exa[1::2,:]** 2, axis=1)
+var_pred = np.mean(Pred[0::2,:]**2 + Pred[1::2,:]**2, axis=1)
+
+kurt_exa  = np.mean(Exa[0::2,:]** 4 + Exa[1::2,:]**4, axis=1) / var_exa  ** 2
+kurt_pred = np.mean(Pred[0::2,:]**4 + Pred[1::2,:]**4, axis=1) / var_pred ** 2
+
+fig, ax = plt.subplots()
+ax.semilogy(range(n // 2), kurt_exa,  label='Vérité terrain')
+ax.semilogy(range(n // 2), kurt_pred, label='Prédiction')
+ax.set_xlabel('Numéro de couche')
+ax.set_ylabel(r'$\log\!\left(\frac{\langle|U_n|^4\rangle_T}{\langle|U_n|^2\rangle_T^2}\right)$')
+ax.legend()
+fig.tight_layout()
+plt.savefig(PATH + "/log_kurtosis.png", format='png')
+plt.close()
