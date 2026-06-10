@@ -18,7 +18,7 @@ import argparse
 
 class Train_PINN():
 
-    def __init__(self,learning_rate,nbr_iteration,w_1,w_2,w_3,w_4,sample_phy,iteration=True,epoch=1000,physic=True,collocation=True,initial=True,normalize_phy=True,inline_phy=True,):
+    def __init__(self,learning_rate,nbr_iteration,w_1,w_2,w_3,w_4,sample_phy,iteration=True,epoch=1000,physic=True,collocation=True,initial=True,normalize_phy=True,inline_phy=True,normalize_energie=0):
         self.learning_rate = learning_rate
         self.nbr_iteration = nbr_iteration
         self.w_1 = w_1
@@ -43,6 +43,7 @@ class Train_PINN():
         self.normalize_phy = normalize_phy
         self.inline_phy = inline_phy
         self.sample_phy = sample_phy
+        self.normalize_enrgie = normalize_energie
 
     def train(self):
 
@@ -301,72 +302,128 @@ class Train_PINN():
                         u_t_phy = u_t[self.sample_phy,:]
                         u_pd_phy = u_pd[self.sample_phy,:]
                         u_pd_im = u_pd_phy[:,1::2]
-                        u_pd_real = u_pd_phy[:,::2]
+                        u_pd_real = u_pd_phy[:,0::2]
                         u_t_im = u_t_phy[:,1::2]
-                        u_t_real = u_t_phy[:,::2]
+                        u_t_real = u_t_phy[:,0::2]
                         # print(u_pd_im.shape)
                         # print(u_t_im.shape)
-                
+                        if self.normalize_enrgie:
+                            a=[(1/(U0*K[i]**(-2/3))) for i in range(k_max)]
+                            print(a)
+                        else:
+                            a=[1 for i in range(k_max)]
                         # on veut calculer la loss physique sur le shells où il y a des collocations points
                         GOY_physics_im = torch.zeros(len(self.sample_phy),k_max).to(device)
                         GOY_physics_real = torch.zeros(len(self.sample_phy),k_max).to(device)
-
-                        # calcul sur les premiers modes
-                        GOY_physics_im[:,0] = (1/(U0*K[0]**(2)))*(u_t_im[:,0] - K[0]*(u_pd_real[:,1]*u_pd_real[:,2] - u_pd_im[:,1]*u_pd_im[:,2]) 
-                        + nu*(K[0]**2)*u_pd_im[:,0])
                         
-                        GOY_physics_im[:,1] = (1/(U0*K[1]**(2)))*(u_t_im[:,1] -K[1]*(u_pd_real[:,2]*u_pd_real[:,3] - u_pd_im[:,2]*u_pd_im[:,3])
+                        if iteration==self.nbr_iteration-1:
+                            Residus_im = torch.zeros(len(self.sample_phy),k_max)
+                            Residus_re = torch.zeros(len(self.sample_phy),k_max)
+                        # calcul sur les premiers modes
+                        
+                            Residus_im[:,0] = -(- K[0]*(u_pd_real[:,1]*u_pd_real[:,2] - u_pd_im[:,1]*u_pd_im[:,2]) 
+                            + nu*(K[0]**2)*u_pd_im[:,0])
+                            
+                            Residus_im[:,1] = -(-K[1]*(u_pd_real[:,2]*u_pd_real[:,3] - u_pd_im[:,2]*u_pd_im[:,3])
+                            +(eps/lmb)*K[1]*(u_pd_real[:,0]*u_pd_real[:,2] - u_pd_im[:,0]*u_pd_im[:,2])
+                            + nu*(K[1]**2)*u_pd_im[:,1])
+
+                            Residus_re[:,0] = -(- K[0]*(u_pd_real[:,1]*u_pd_im[:,2] - u_pd_im[:,1]*u_pd_real[:,2]) 
+                            + nu*(K[0]**2)*u_pd_real[:,0])
+
+                            Residus_re[:,1] = -(-K[1]*(u_pd_real[:,2]*u_pd_im[:,3] - u_pd_im[:,2]*u_pd_real[:,3])
+                            +(eps/lmb)*K[1]*(u_pd_real[:,0]*u_pd_im[:,2] - u_pd_im[:,0]*u_pd_real[:,2])
+                            + nu*(K[1]**2)*u_pd_real[:,1])
+
+                            Residus_im[:,k_max-2] = -(+ K[k_max-2]*(eps/lmb)*(u_pd_real[:,k_max-3]*u_pd_real[:,k_max-1]-u_pd_im[:,k_max-3]*u_pd_im[:,k_max-1])
+                            - K[k_max-2]*((eps-1)/(lmb**2))*(u_pd_real[:,k_max-4]*u_pd_real[:,k_max-3] - u_pd_im[:,k_max-4]*u_pd_im[:,k_max-3])
+                            + nu*(K[k_max-2]**2)*u_pd_im[:,k_max-2])
+
+                            Residus_im[:,k_max-1] =  -(-((eps-1)/(lmb**2))*K[k_max-1]*(u_pd_real[:,k_max-3]*u_pd_real[:,k_max-2] - u_pd_im[:,k_max-3]*u_pd_im[:,k_max-2])
+                            + nu*(K[k_max-1]**2)*u_pd_im[:,k_max-1])
+
+                            Residus_re[:,k_max-2] = -(+ K[k_max-2]*(eps/lmb)*(u_pd_real[:,k_max-3]*u_pd_im[:,k_max-1]-u_pd_im[:,k_max-3]*u_pd_real[:,k_max-1])
+                            - K[k_max-2]*((eps-1)/(lmb**2))*(u_pd_real[:,k_max-4]*u_pd_im[:,k_max-3] - u_pd_im[:,k_max-4]*u_pd_real[:,k_max-3])
+                            + nu*(K[k_max-2]**2)*u_pd_real[:,k_max-2])
+
+                            Residus_re[:,k_max-2] =  -(-((eps-1)/(lmb**2))*K[k_max-1]*(u_pd_real[:,k_max-3]*u_pd_im[:,k_max-2] - u_pd_im[:,k_max-3]*u_pd_real[:,k_max-2])
+                            + nu*(K[k_max-1]**2)*u_pd_real[:,k_max-1])
+
+
+                        GOY_physics_im[:,0] = a[0]*(u_t_im[:,0] - K[0]*(u_pd_real[:,1]*u_pd_real[:,2] - u_pd_im[:,1]*u_pd_im[:,2]) 
+                        + nu*(K[0]**2)*u_pd_im[:,0])
+                    
+
+                        GOY_physics_im[:,1] = a[1]*(u_t_im[:,1] -K[1]*(u_pd_real[:,2]*u_pd_real[:,3] - u_pd_im[:,2]*u_pd_im[:,3])
                         +(eps/lmb)*K[1]*(u_pd_real[:,0]*u_pd_real[:,2] - u_pd_im[:,0]*u_pd_im[:,2])
                         + nu*(K[1]**2)*u_pd_im[:,1])
 
-                        GOY_physics_real[:,0] = (1/(U0*K[0]**(2)))*(u_t_real[:,0] - K[0]*(u_pd_real[:,1]*u_pd_im[:,2] - u_pd_im[:,1]*u_pd_real[:,2]) 
+
+                        GOY_physics_real[:,0] = a[0]*(u_t_real[:,0] - K[0]*(u_pd_real[:,1]*u_pd_im[:,2] - u_pd_im[:,1]*u_pd_real[:,2]) 
                         + nu*(K[0]**2)*u_pd_real[:,0])
                         
-                        GOY_physics_real[:,1] = (1/(U0*K[1]**(2)))*(u_t_real[:,1] -K[1]*(u_pd_real[:,2]*u_pd_im[:,3] - u_pd_im[:,2]*u_pd_real[:,3])
+                        
+
+                        GOY_physics_real[:,1] = a[1]*(u_t_real[:,1] -K[1]*(u_pd_real[:,2]*u_pd_im[:,3] - u_pd_im[:,2]*u_pd_real[:,3])
                         +(eps/lmb)*K[1]*(u_pd_real[:,0]*u_pd_im[:,2] - u_pd_im[:,0]*u_pd_real[:,2])
                         + nu*(K[1]**2)*u_pd_real[:,1])
 
 
                         # cacul à l'intétrieur du domaine
                         for i in range (2,k_max-2):
-                            GOY_physics_im[:,i] = (1/(U0*K[i]**(2)))*(u_t_im[:,i] 
+                            if iteration==self.nbr_iteration-1:
+                                Residus_im[:,i] = -(- K[i]*(u_pd_real[:,i+1]*u_pd_real[:,i+2] - u_pd_im[:,i+2]*u_pd_im[:,i+1])
+                                +(eps/lmb)*K[i]*(u_pd_real[:,i-1]*u_pd_real[:,i+1] - u_pd_im[:,i-1]*u_pd_im[:,i+1])
+                                -((eps-1)/(lmb**2))*K[i]*(u_pd_real[:,i-2]*u_pd_real[:,i-1] - u_pd_im[:,i-2]*u_pd_im[:,i-1])
+                                +nu*(K[i]**2)*u_pd_im[:,i])
+
+                                Residus_re[:,i] = -(- K[i]*(u_pd_real[:,i+1]*u_pd_im[:,i+2] - u_pd_real[:,i+2]*u_pd_im[:,i+1])
+                                +(eps/lmb)*K[i]*(u_pd_real[:,i-1]*u_pd_im[:,i+1] - u_pd_im[:,i-1]*u_pd_real[:,i+1])
+                                -((eps-1)/(lmb**2))*K[i]*(u_pd_real[:,i-2]*u_pd_im[:,i-1] - u_pd_im[:,i-2]*u_pd_real[:,i-1])
+                                +nu*(K[i]**2)*u_pd_real[:,i])
+
+
+
+                            GOY_physics_im[:,i] = a[i]*(u_t_im[:,i] 
                             - K[i]*(u_pd_real[:,i+1]*u_pd_real[:,i+2] - u_pd_im[:,i+2]*u_pd_im[:,i+1])
                             +(eps/lmb)*K[i]*(u_pd_real[:,i-1]*u_pd_real[:,i+1] - u_pd_im[:,i-1]*u_pd_im[:,i+1])
                             -((eps-1)/(lmb**2))*K[i]*(u_pd_real[:,i-2]*u_pd_real[:,i-1] - u_pd_im[:,i-2]*u_pd_im[:,i-1])
                             +nu*(K[i]**2)*u_pd_im[:,i])
 
-                            GOY_physics_real[:,i] = (1/(U0*K[i]**(2)))*(u_t_real[:,i] 
+                            
+                        
+                            GOY_physics_real[:,i] = a[i]*(u_t_real[:,i] 
                             - K[i]*(u_pd_real[:,i+1]*u_pd_im[:,i+2] - u_pd_real[:,i+2]*u_pd_im[:,i+1])
                             +(eps/lmb)*K[i]*(u_pd_real[:,i-1]*u_pd_im[:,i+1] - u_pd_im[:,i-1]*u_pd_real[:,i+1])
                             -((eps-1)/(lmb**2))*K[i]*(u_pd_real[:,i-2]*u_pd_im[:,i-1] - u_pd_im[:,i-2]*u_pd_real[:,i-1])
                             +nu*(K[i]**2)*u_pd_real[:,i])
 
                         # calcul sur les derniers modes
-                        GOY_physics_im[:,k_max-2] = (1/(U0*K[k_max-2]**(2)))*(u_t_im[:,k_max-2] 
+                        
+
+                        GOY_physics_im[:,k_max-2] = a[k_max-2]*(u_t_im[:,k_max-2] 
                         + K[k_max-2]*(eps/lmb)*(u_pd_real[:,k_max-3]*u_pd_real[:,k_max-1]-u_pd_im[:,k_max-3]*u_pd_im[:,k_max-1])
                         - K[k_max-2]*((eps-1)/(lmb**2))*(u_pd_real[:,k_max-4]*u_pd_real[:,k_max-3] - u_pd_im[:,k_max-4]*u_pd_im[:,k_max-3])
                         + nu*(K[k_max-2]**2)*u_pd_im[:,k_max-2])
                         
-                        GOY_physics_im[:,k_max-1] = (1/(U0*K[k_max-1]**(2)))*(u_t_im[:,k_max-1]
+                        
+                        GOY_physics_im[:,k_max-1] = a[k_max-1]*(u_t_im[:,k_max-1]
                         -((eps-1)/(lmb**2))*K[k_max-1]*(u_pd_real[:,k_max-3]*u_pd_real[:,k_max-2] - u_pd_im[:,k_max-3]*u_pd_im[:,k_max-2])
                         + nu*(K[k_max-1]**2)*u_pd_im[:,k_max-1])
 
-                        GOY_physics_real[:,k_max-2] = (1/(U0*K[k_max-2]**(2)))*(u_t_real[:,k_max-2] 
+                        
+
+                        GOY_physics_real[:,k_max-2] = a[k_max-2]*(u_t_real[:,k_max-2] 
                         + K[k_max-2]*(eps/lmb)*(u_pd_real[:,k_max-3]*u_pd_im[:,k_max-1]-u_pd_im[:,k_max-3]*u_pd_real[:,k_max-1])
                         - K[k_max-2]*((eps-1)/(lmb**2))*(u_pd_real[:,k_max-4]*u_pd_im[:,k_max-3] - u_pd_im[:,k_max-4]*u_pd_real[:,k_max-3])
                         + nu*(K[k_max-2]**2)*u_pd_real[:,k_max-2])
                         
-                        GOY_physics_real[:,k_max-1] = (1/(U0*K[k_max-1]**(2)))*(u_t_real[:,k_max-1]
+                        
+            
+                        GOY_physics_real[:,k_max-1] = a[k_max-1]*(u_t_real[:,k_max-1]
                         -((eps-1)/(lmb**2))*K[k_max-1]*(u_pd_real[:,k_max-3]*u_pd_im[:,k_max-2] - u_pd_im[:,k_max-3]*u_pd_real[:,k_max-2])
                         + nu*(K[k_max-1]**2)*u_pd_real[:,k_max-1])
 
-                    if self.normalize_phy:
-                        Mean_Phy_Goy_real,Std_Phy_Goy_real = torch.mean(GOY_physics_real,0),torch.std(GOY_physics_real,0)
-                        Mean_Phy_Goy_im,Std_Phy_Goy_im = torch.mean(GOY_physics_im,0),torch.std(GOY_physics_im,0)
-
-                        for k in range(k_max):
-                            GOY_physics_real[:,k] = (GOY_physics_real[:,k]-Mean_Phy_Goy_real[k])/Std_Phy_Goy_real[k]
-                            GOY_physics_im[:,k] = (GOY_physics_im[:,k]-Mean_Phy_Goy_im[k])/Std_Phy_Goy_im[k]
                     list_loss_phy = []
                     
                     for i in range(len(weighter.lmb_phy)):
@@ -379,9 +436,9 @@ class Train_PINN():
                     loss_physics = 0
                 
                 if iteration % 100 == 0:
-                    print("avant",weighter.lmb_phy)
+                    
                     weighter.update( loss_ic=loss_initital_conditions,loss_bc=loss_boundary_conditions, loss_r=list_loss_phy, model_params=params)
-                    print("apres",weighter.lmb_phy)
+                
     # Loss totale pondérée
                 total_loss = weighter.weighted_loss(loss_ic=loss_initital_conditions,loss_bc=loss_boundary_conditions, loss_r=list_loss_phy)
                 
@@ -489,6 +546,7 @@ class Train_PINN():
     "loss_trackeur_phy": loss_trackeur_phy,
     "lmb_phy_trackeur": lmb_phy_trackeur,
     "lmb_ic_trackeur": lmb_ic_trackeur,
+    "residus": [Residus_re,Residus_im]
 }
 
 
@@ -662,7 +720,7 @@ data =  np.loadtxt(path_data,dtype=np.float32) # charge le jeu de données
 Nmax = np.shape(data)[0] # nombres de pas de temps
 debut = int(0.1*Nmax) # skip la phase de stabilisation
 
-Data_shell = data[debut:debut+20000,:] # on garde que la partie réelle de chaque shell
+Data_shell = data[debut:-1,:] # on garde que la partie réelle de chaque shell
 Npts = np.shape(Data_shell)[0] # nombre de pas dans le temps
 
 # nb of shells selected for training the PINN on collocatin point
@@ -861,12 +919,39 @@ fig.savefig(PATH + "lambda_shells_all.png")
 plt.close(fig)
 
 
+##################################
+#   plot check dudt et residus   #
+##################################
+
+du_dt = Total_loss["u_t"]
+residu_im = Total_loss["residus"][1]
+residu_re = Total_loss["residus"][0]
+
+res_im_split = torch.split(residu_im,len(random_samples_phy))
+
+res_re_split = torch.split(residu_re,len(random_samples_phy))
+RES_re = torch.cat(tuple(k for k in res_re_split)).cpu().detach().numpy()
+RES_im = torch.cat(tuple(k for k in res_im_split)).cpu().detach().numpy()
 
 # du_dt = Total_loss[-1]
 
-# du_split = torch.split(du_dt,Npts)
-# DUDT = torch.cat(tuple(k for k in du_split),1)
-# DUDT = DUDT.cpu().detach().numpy()
+du_split = torch.split(du_dt,Npts)
+DUDT = torch.cat(tuple(k for k in du_split),1)
+DUDT = DUDT.cpu().detach().numpy()
+for i in range(U.shape[1]):
+    plt.figure()
+    plt.plot(U[:,i],label=f'Prédiction de u{i}')
+    plt.plot(DUDT[:,i],label = f"du/dt {int(i/2)}")
+    if i%2:
+        plt.plot(RES_re[:,int(i/2)],label = f"Re(residus) couches {int(i/2)}")
+    else:
+        plt.plot(RES_im[:,int(i/2)],label = f"Im(residus) couches {int(i/2)}")
+    plt.xlabel('Temps')
+    plt.ylabel('dudt et residus')
+    plt.legend()
+    plt.savefig(PATH + f"/residus_u{i}.png")
+    plt.close()
+
 
 idx_sample = np.random.choice(random_samples, size=10, replace=False)
 idx_sample_phy = np.random.choice(random_samples_phy, size=10, replace=False)
@@ -941,7 +1026,7 @@ Pred = U.T      # shape (n/2, nb)
 # ── Variance log ──────────────────────────────────────────────────────────────
 fig, ax = plt.subplots()
 ax.semilogy(range(n // 2), np.mean(Exa[0::2,:] ** 2 + Exa[1::2,:]**2,  axis=1), label='Vérité terrain')
-ax.semilogy(range(n // 2), np.mean(Pred[0::2,:] ** 2 + Pred[1::2,:]**2, axis=1), label='Prédiction')
+ax.semilogy(range(n // 2), np.mean(((Pred[0::2,:] ** 2 + Pred[1::2,:]**2) - np.mean(Pred[0::2,:] ** 2 + Pred[1::2,:]**2, axis=1))**2,axis=1) , label='Prédiction')
 ax.semilogy(range(n // 2), [k ** (-2/3) for k in K], '--', alpha=0.5, label='$k^{-2/3}$')
 ax.set_xlabel('Numéro de couche')
 ax.set_ylabel(r'$\log(\langle|U_n|^2\rangle_T)$')
