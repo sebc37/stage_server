@@ -8,9 +8,11 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.data.sampler import Sampler
 from torch import optim
+import torch.optim.lr_scheduler as lr_scheduler
 from torch.func import functional_call, vmap, jacrev
 import tqdm
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 import argparse
 
 
@@ -23,7 +25,16 @@ class Train_PINN():
         self.w_2 = w_2
         self.w_3 = w_3
         self.w_4 = w_4
+        
         self.optimizer = torch.optim.Adam(model.parameters(),lr = self.learning_rate)
+        self.scheduler = lr_scheduler.StepLR(self.optimizer, step_size=1000, gamma=0.9)
+        self.optimizer_lbfgs = optim.LBFGS(
+    model.parameters(),
+    lr=0.1,
+    max_iter=20,
+    history_size=50,
+    line_search_fn='strong_wolfe'  # crucial pour la stabilité
+)
         self.iteration = iteration
         self.epoch = epoch
         self.physic = physic
@@ -42,15 +53,123 @@ class Train_PINN():
         loss_initial_conditions_tracker = np.zeros((self.nbr_iteration,1))
         lmb_tracker_phy = np.zeros((self.nbr_iteration,1))
         lmb_tracker_bc = np.zeros((self.nbr_iteration,1))
-        weighter = DynamicLossWeighter(alpha=0.9)
+        loss_trackeur_phy = np.zeros((22,self.nbr_iteration))
+        lmb_phy_trackeur = np.zeros((22,self.nbr_iteration))
+        lmb_ic_trackeur = np.zeros((self.nbr_iteration,1))
+        weighter = DynamicLossWeighter(alpha=0.9,N=22)
+
+        
 
         params = list(model.parameters())
+
+        def ic_losses():
+            initial_train_data = initial_train_dataset.tensor_data.to(device) #torch.tensor(initial_rows, dtype=torch.float32)
+            u_pd_ini = model(initial_train_data[:, 0:2]).to(device)
+            u_exa_ini = initial_train_data[:,2:3]
+            loss_initital_conditions = self.w_1*torch.mean((u_pd_ini-u_exa_ini)**2).to(device)
+            return loss_initital_conditions
+        
+        def bc_losses():
+            boundary_train_data = boundary_train_dataset.tensor_data_bc.to(device)#torch.tensor(boundary_rows, dtype=torch.float32)
+            u_pd_bou = model(boundary_train_data[:, 0:2]).to(device)
+            u_exa_bou = boundary_train_data[:,2:3]
+            loss_boundary_conditions = self.w_2*torch.mean((u_pd_bou-u_exa_bou)**2).to(device)
+            return loss_boundary_conditions
+
+        def colocation_losses():
+            colocation_train_data = colocation_dataset.tensor_data_colocation#.to(device)
+            loss_colocation = 0
+            for i in range(360): 
+                vect = colocation_train_data[i*3003: (i+1)*3003,0:2].to(device)
+                u_pd_colocation = model(vect).to(device)
+            
+            
+                loss_colocation += self.w_3*torch.mean((u_pd_colocation[:]-vect)**2).to(device)
+
+            loss_colocation = loss_colocation/(360)
+            return loss_colocation
+        
+        def physics_losses():
+            grid_train_data = grid_dataset.grid.requires_grad_(True).to(device)
+            u_pd = model(grid_train_data).to(device)
+            u_t = torch.autograd.grad(u_pd, grid_train_data, torch.ones_like(u_pd), create_graph=True)[0][:,1:2].to(device)
+            # calcul de la physique
+            u_pd = u_pd.view(2*k_max-k_min,Npts).T #Npts
+            u_t = u_t.view(2*k_max-k_min,Npts).T
+            u_t_phy = u_t[self.sample_phy,:]
+            u_pd_phy = u_pd[self.sample_phy,:]
+            u_pd_im = u_pd_phy[:,1::2]
+            u_pd_real = u_pd_phy[:,::2]
+            u_t_im = u_t_phy[:,1::2]
+            u_t_real = u_t_phy[:,::2]
+            # print(u_pd_im.shape)
+            # print(u_t_im.shape)
+    
+            # on veut calculer la loss physique sur le shells où il y a des collocations points
+            GOY_physics_im = torch.zeros(len(self.sample_phy),k_max).to(device)
+            GOY_physics_real = torch.zeros(len(self.sample_phy),k_max).to(device)
+
+            # calcul sur les premiers modes
+            GOY_physics_im[:,0] = (u_t_im[:,0] - K[0]*(u_pd_real[:,1]*u_pd_real[:,2] - u_pd_im[:,1]*u_pd_im[:,2]) 
+            + nu*(K[0]**2)*u_pd_im[:,0])
+            
+            GOY_physics_im[:,1] = (u_t_im[:,1] -K[1]*(u_pd_real[:,2]*u_pd_real[:,3] - u_pd_im[:,2]*u_pd_im[:,3])
+            +(eps/lmb)*K[1]*(u_pd_real[:,0]*u_pd_real[:,2] - u_pd_im[:,0]*u_pd_im[:,2])
+            + nu*(K[1]**2)*u_pd_im[:,1])
+
+            GOY_physics_real[:,0] = (u_t_real[:,0] - K[0]*(u_pd_real[:,1]*u_pd_im[:,2] - u_pd_im[:,1]*u_pd_real[:,2]) 
+            + nu*(K[0]**2)*u_pd_real[:,0])
+            
+            GOY_physics_real[:,1] = (u_t_real[:,1] -K[1]*(u_pd_real[:,2]*u_pd_im[:,3] - u_pd_im[:,2]*u_pd_real[:,3])
+            +(eps/lmb)*K[1]*(u_pd_real[:,0]*u_pd_im[:,2] - u_pd_im[:,0]*u_pd_real[:,2])
+            + nu*(K[1]**2)*u_pd_real[:,1])
+
+
+            # cacul à l'intétrieur du domaine
+            for i in range (2,k_max-2):
+                GOY_physics_im[:,i] = (u_t_im[:,i] 
+                - K[i]*(u_pd_real[:,i+1]*u_pd_real[:,i+2] - u_pd_im[:,i+2]*u_pd_im[:,i+1])
+                +(eps/lmb)*K[i]*(u_pd_real[:,i-1]*u_pd_real[:,i+1] - u_pd_im[:,i-1]*u_pd_im[:,i+1])
+                -((eps-1)/(lmb**2))*K[i]*(u_pd_real[:,i-2]*u_pd_real[:,i-1] - u_pd_im[:,i-2]*u_pd_im[:,i-1])
+                +nu*(K[i]**2)*u_pd_im[:,i])
+
+                GOY_physics_real[:,i] = (u_t_real[:,i] 
+                - K[i]*(u_pd_real[:,i+1]*u_pd_im[:,i+2] - u_pd_real[:,i+2]*u_pd_im[:,i+1])
+                +(eps/lmb)*K[i]*(u_pd_real[:,i-1]*u_pd_im[:,i+1] - u_pd_im[:,i-1]*u_pd_real[:,i+1])
+                -((eps-1)/(lmb**2))*K[i]*(u_pd_real[:,i-2]*u_pd_im[:,i-1] - u_pd_im[:,i-2]*u_pd_real[:,i-1])
+                +nu*(K[i]**2)*u_pd_real[:,i])
+
+            # calcul sur les derniers modes
+            GOY_physics_im[:,k_max-2] = (u_t_im[:,k_max-2] 
+            + K[k_max-2]*(eps/lmb)*(u_pd_real[:,k_max-3]*u_pd_real[:,k_max-1]-u_pd_im[:,k_max-3]*u_pd_im[:,k_max-1])
+            - K[k_max-2]*((eps-1)/(lmb**2))*(u_pd_real[:,k_max-4]*u_pd_real[:,k_max-3] - u_pd_im[:,k_max-4]*u_pd_im[:,k_max-3])
+            + nu*(K[k_max-2]**2)*u_pd_im[:,k_max-2])
+            
+            GOY_physics_im[:,k_max-1] = (u_t_im[:,k_max-1]
+            -((eps-1)/(lmb**2))*K[k_max-1]*(u_pd_real[:,k_max-3]*u_pd_real[:,k_max-2] - u_pd_im[:,k_max-3]*u_pd_im[:,k_max-2])
+            + nu*(K[k_max-1]**2)*u_pd_im[:,k_max-1])
+
+            GOY_physics_real[:,k_max-2] = (u_t_real[:,k_max-2] 
+            + K[k_max-2]*(eps/lmb)*(u_pd_real[:,k_max-3]*u_pd_im[:,k_max-1]-u_pd_im[:,k_max-3]*u_pd_real[:,k_max-1])
+            - K[k_max-2]*((eps-1)/(lmb**2))*(u_pd_real[:,k_max-4]*u_pd_im[:,k_max-3] - u_pd_im[:,k_max-4]*u_pd_real[:,k_max-3])
+            + nu*(K[k_max-2]**2)*u_pd_real[:,k_max-2])
+            
+            GOY_physics_real[:,k_max-1] = (u_t_real[:,k_max-1]
+            -((eps-1)/(lmb**2))*K[k_max-1]*(u_pd_real[:,k_max-3]*u_pd_im[:,k_max-2] - u_pd_im[:,k_max-3]*u_pd_real[:,k_max-2])
+            + nu*(K[k_max-1]**2)*u_pd_real[:,k_max-1])
+            # à compléter
+            
+            return loss_physics
+        
+        
+ 
         if self.iteration:
             for iteration in tqdm.tqdm(range(self.nbr_iteration)):
                 self.optimizer.zero_grad()
 
                 #initial conditions Loss
                 if self.initial:
+                    #print(initial_train_dataset.tensor_data)
                     initial_train_data = initial_train_dataset.tensor_data.to(device) #torch.tensor(initial_rows, dtype=torch.float32)
                     u_pd_ini = model(initial_train_data[:, 0:2]).to(device)
                     u_exa_ini = initial_train_data[:,2:3]
@@ -59,6 +178,8 @@ class Train_PINN():
                     loss_initital_conditions = 0
                 #Boundary conditions Loss
                 boundary_train_data = boundary_train_dataset.tensor_data_bc.to(device)#torch.tensor(boundary_rows, dtype=torch.float32)
+                #print(boundary_train_data.shape)
+                #print(boundary_train_data[0:50,0:2])
                 u_pd_bou = model(boundary_train_data[:, 0:2]).to(device)
                 u_exa_bou = boundary_train_data[:,2:3]
                 #print(u_pd_bou.shape)
@@ -191,51 +312,51 @@ class Train_PINN():
                         GOY_physics_real = torch.zeros(len(self.sample_phy),k_max).to(device)
 
                         # calcul sur les premiers modes
-                        GOY_physics_im[:,0] = (u_t_im[:,0] - K[0]*(u_pd_real[:,1]*u_pd_real[:,2] - u_pd_im[:,1]*u_pd_im[:,2]) 
+                        GOY_physics_im[:,0] = (1/(U0*K[0]**(2)))*(u_t_im[:,0] - K[0]*(u_pd_real[:,1]*u_pd_real[:,2] - u_pd_im[:,1]*u_pd_im[:,2]) 
                         + nu*(K[0]**2)*u_pd_im[:,0])
                         
-                        GOY_physics_im[:,1] = (u_t_im[:,1] -K[1]*(u_pd_real[:,2]*u_pd_real[:,3] - u_pd_im[:,2]*u_pd_im[:,3])
+                        GOY_physics_im[:,1] = (1/(U0*K[1]**(2)))*(u_t_im[:,1] -K[1]*(u_pd_real[:,2]*u_pd_real[:,3] - u_pd_im[:,2]*u_pd_im[:,3])
                         +(eps/lmb)*K[1]*(u_pd_real[:,0]*u_pd_real[:,2] - u_pd_im[:,0]*u_pd_im[:,2])
                         + nu*(K[1]**2)*u_pd_im[:,1])
 
-                        GOY_physics_real[:,0] = (u_t_real[:,0] - K[0]*(u_pd_real[:,1]*u_pd_im[:,2] - u_pd_im[:,1]*u_pd_real[:,2]) 
+                        GOY_physics_real[:,0] = (1/(U0*K[0]**(2)))*(u_t_real[:,0] - K[0]*(u_pd_real[:,1]*u_pd_im[:,2] - u_pd_im[:,1]*u_pd_real[:,2]) 
                         + nu*(K[0]**2)*u_pd_real[:,0])
                         
-                        GOY_physics_real[:,1] = (u_t_real[:,1] -K[1]*(u_pd_real[:,2]*u_pd_im[:,3] - u_pd_im[:,2]*u_pd_real[:,3])
+                        GOY_physics_real[:,1] = (1/(U0*K[1]**(2)))*(u_t_real[:,1] -K[1]*(u_pd_real[:,2]*u_pd_im[:,3] - u_pd_im[:,2]*u_pd_real[:,3])
                         +(eps/lmb)*K[1]*(u_pd_real[:,0]*u_pd_im[:,2] - u_pd_im[:,0]*u_pd_real[:,2])
                         + nu*(K[1]**2)*u_pd_real[:,1])
 
 
                         # cacul à l'intétrieur du domaine
                         for i in range (2,k_max-2):
-                            GOY_physics_im[:,i] = (u_t_im[:,i] 
+                            GOY_physics_im[:,i] = (1/(U0*K[i]**(2)))*(u_t_im[:,i] 
                             - K[i]*(u_pd_real[:,i+1]*u_pd_real[:,i+2] - u_pd_im[:,i+2]*u_pd_im[:,i+1])
                             +(eps/lmb)*K[i]*(u_pd_real[:,i-1]*u_pd_real[:,i+1] - u_pd_im[:,i-1]*u_pd_im[:,i+1])
                             -((eps-1)/(lmb**2))*K[i]*(u_pd_real[:,i-2]*u_pd_real[:,i-1] - u_pd_im[:,i-2]*u_pd_im[:,i-1])
                             +nu*(K[i]**2)*u_pd_im[:,i])
 
-                            GOY_physics_real[:,i] = (u_t_real[:,i] 
+                            GOY_physics_real[:,i] = (1/(U0*K[i]**(2)))*(u_t_real[:,i] 
                             - K[i]*(u_pd_real[:,i+1]*u_pd_im[:,i+2] - u_pd_real[:,i+2]*u_pd_im[:,i+1])
                             +(eps/lmb)*K[i]*(u_pd_real[:,i-1]*u_pd_im[:,i+1] - u_pd_im[:,i-1]*u_pd_real[:,i+1])
                             -((eps-1)/(lmb**2))*K[i]*(u_pd_real[:,i-2]*u_pd_im[:,i-1] - u_pd_im[:,i-2]*u_pd_real[:,i-1])
                             +nu*(K[i]**2)*u_pd_real[:,i])
 
                         # calcul sur les derniers modes
-                        GOY_physics_im[:,k_max-2] = (u_t_im[:,k_max-2] 
+                        GOY_physics_im[:,k_max-2] = (1/(U0*K[k_max-2]**(2)))*(u_t_im[:,k_max-2] 
                         + K[k_max-2]*(eps/lmb)*(u_pd_real[:,k_max-3]*u_pd_real[:,k_max-1]-u_pd_im[:,k_max-3]*u_pd_im[:,k_max-1])
                         - K[k_max-2]*((eps-1)/(lmb**2))*(u_pd_real[:,k_max-4]*u_pd_real[:,k_max-3] - u_pd_im[:,k_max-4]*u_pd_im[:,k_max-3])
                         + nu*(K[k_max-2]**2)*u_pd_im[:,k_max-2])
                         
-                        GOY_physics_im[:,k_max-1] = (u_t_im[:,k_max-1]
+                        GOY_physics_im[:,k_max-1] = (1/(U0*K[k_max-1]**(2)))*(u_t_im[:,k_max-1]
                         -((eps-1)/(lmb**2))*K[k_max-1]*(u_pd_real[:,k_max-3]*u_pd_real[:,k_max-2] - u_pd_im[:,k_max-3]*u_pd_im[:,k_max-2])
                         + nu*(K[k_max-1]**2)*u_pd_im[:,k_max-1])
 
-                        GOY_physics_real[:,k_max-2] = (u_t_real[:,k_max-2] 
+                        GOY_physics_real[:,k_max-2] = (1/(U0*K[k_max-2]**(2)))*(u_t_real[:,k_max-2] 
                         + K[k_max-2]*(eps/lmb)*(u_pd_real[:,k_max-3]*u_pd_im[:,k_max-1]-u_pd_im[:,k_max-3]*u_pd_real[:,k_max-1])
                         - K[k_max-2]*((eps-1)/(lmb**2))*(u_pd_real[:,k_max-4]*u_pd_im[:,k_max-3] - u_pd_im[:,k_max-4]*u_pd_real[:,k_max-3])
                         + nu*(K[k_max-2]**2)*u_pd_real[:,k_max-2])
                         
-                        GOY_physics_real[:,k_max-1] = (u_t_real[:,k_max-1]
+                        GOY_physics_real[:,k_max-1] = (1/(U0*K[k_max-1]**(2)))*(u_t_real[:,k_max-1]
                         -((eps-1)/(lmb**2))*K[k_max-1]*(u_pd_real[:,k_max-3]*u_pd_im[:,k_max-2] - u_pd_im[:,k_max-3]*u_pd_real[:,k_max-2])
                         + nu*(K[k_max-1]**2)*u_pd_real[:,k_max-1])
 
@@ -246,26 +367,42 @@ class Train_PINN():
                         for k in range(k_max):
                             GOY_physics_real[:,k] = (GOY_physics_real[:,k]-Mean_Phy_Goy_real[k])/Std_Phy_Goy_real[k]
                             GOY_physics_im[:,k] = (GOY_physics_im[:,k]-Mean_Phy_Goy_im[k])/Std_Phy_Goy_im[k]
+                    list_loss_phy = []
                     
+                    for i in range(len(weighter.lmb_phy)):
+                        list_loss_phy.append(weighter.lmb_phy[i] *torch.mean ((GOY_physics_real[:,i]**2 + GOY_physics_im[:,i]**2)).to(device) )
                         #u_t[:,i] -K[i]*u_pd[:,i+1]*u_pd[:,i+2] +K[i]*eps/lmb*u_pd[:,i-1]*u_pd[:,i+1] + K[i]*((eps-1)/lmb**2)*u_pd[:,i-2]*u_pd[:,i-1] + nu*K[i]*K[i]*u_pd[:,i] # à confirmer
-                    loss_physics =  self.w_4*torch.mean(GOY_physics_real**2+GOY_physics_im**2).to(device) #self.w_4*torch.mean(GOY_physics_**2)
+                    loss_physics =  sum(list_loss_phy) #self.w_4*torch.mean(sum(list_loss_phy)).to(device) #GOY_physics_real**2+GOY_physics_im**2).to(device)
+
+                     #self.w_4*torch.mean(GOY_physics_**2)
                 else:
                     loss_physics = 0
                 
                 if iteration % 100 == 0:
-                    weighter.update( loss_ic=0,loss_bc=loss_boundary_conditions, loss_r=loss_physics, model_params=params)
-
+                    print("avant",weighter.lmb_phy)
+                    weighter.update( loss_ic=loss_initital_conditions,loss_bc=loss_boundary_conditions, loss_r=list_loss_phy, model_params=params)
+                    print("apres",weighter.lmb_phy)
     # Loss totale pondérée
-                total_loss = weighter.weighted_loss(loss_ic=0,loss_bc=loss_boundary_conditions, loss_r=loss_physics)
-
+                total_loss = weighter.weighted_loss(loss_ic=loss_initital_conditions,loss_bc=loss_boundary_conditions, loss_r=list_loss_phy)
+                
+   
+                # print("Total Loss:", total_loss.shape)
+                # print("Total Loss:", total_loss.item())
+                # print("Total Loss:", type(total_loss))
                 #Total Loss
                 #NTK_bc = get_ntk(model,u_pd,u)
                 #total_loss = loss_initital_conditions + loss_boundary_conditions +loss_physics + loss_colocation
+                
                 total_loss.backward()
                 self.optimizer.step()
+                #print("optimizer : Adam")
+                
+                # if iteration >=20000
+                # self.scheduler.step(total_loss)
                 loss[iteration]=total_loss.cpu().detach().numpy()
                 if self.physic:
                     loss_physics_tracker[iteration] = loss_physics.cpu().detach().numpy()
+                    loss_trackeur_phy[:,iteration] = [l.cpu().detach().numpy() for l in list_loss_phy]
                 else:
                     loss_physics_tracker[iteration] = loss_physics
                 if self.collocation:
@@ -274,13 +411,17 @@ class Train_PINN():
                     loss_colocation_tracker[iteration] = loss_colocation
                
                 loss_boundary_conditions_tracker[iteration] = loss_boundary_conditions.cpu().detach().numpy()
-                
+                lmb_tracker_bc[iteration] = weighter.lambda_bc.cpu().detach().numpy()
                 if self.initial:
                     loss_initial_conditions_tracker[iteration] = loss_initital_conditions.cpu().detach().numpy()
+                    lmb_ic_trackeur[iteration] = weighter.lambda_ic.cpu().detach().numpy()
                 else:
                     loss_initial_conditions_tracker[iteration] = loss_initital_conditions
-                lmb_tracker_phy[iteration] = weighter.lambda_r#.cpu().detach().numpy()
-                lmb_tracker_bc[iteration] = weighter.lambda_bc.cpu().detach().numpy()
+                #lmb_tracker_phy[iteration] = weighter.lambda_r#.cpu().detach().numpy()
+                
+                for i in range(22):
+                    lmb_phy_trackeur[i,iteration] = weighter.lmb_phy[i].cpu().detach().numpy()
+
         else:
                 # regarder comment calculer les loss 
                 loss_func = torch.nn.MSELoss()
@@ -336,7 +477,19 @@ class Train_PINN():
         # print(total_loss)
             
             
-        return loss,loss_physics_tracker,loss_colocation_tracker,loss_boundary_conditions_tracker,loss_initial_conditions_tracker,lmb_tracker_bc,lmb_tracker_phy,u_t
+        return {
+    "loss": loss,
+    "loss_physics_tracker": loss_physics_tracker,
+    "loss_colocation_tracker": loss_colocation_tracker,
+    "loss_boundary_conditions_tracker": loss_boundary_conditions_tracker,
+    "loss_initial_conditions_tracker": loss_initial_conditions_tracker,
+    "lmb_tracker_bc": lmb_tracker_bc,
+    "lmb_tracker_phy": lmb_tracker_phy,
+    "u_t": u_t,
+    "loss_trackeur_phy": loss_trackeur_phy,
+    "lmb_phy_trackeur": lmb_phy_trackeur,
+    "lmb_ic_trackeur": lmb_ic_trackeur,
+}
 
 
 def get_ntk(model, x1, x2):
@@ -509,7 +662,7 @@ data =  np.loadtxt(path_data,dtype=np.float32) # charge le jeu de données
 Nmax = np.shape(data)[0] # nombres de pas de temps
 debut = int(0.1*Nmax) # skip la phase de stabilisation
 
-Data_shell = data[debut:Nmax,:] # on garde que la partie réelle de chaque shell
+Data_shell = data[debut:debut+20000,:] # on garde que la partie réelle de chaque shell
 Npts = np.shape(Data_shell)[0] # nombre de pas dans le temps
 
 # nb of shells selected for training the PINN on collocatin point
@@ -529,6 +682,8 @@ initial = config["initial"]
 collocation = config["collocation"]
 normalize_phy = config["normalize_phy"]
 inline_phy = config["inline_phy"]
+ratio_sample_obs = config["ratio_sample_obs"]
+ratio_sample_phy = config["ratio_sample_phy"]
 
 # retourne un dataset pour plot , var,std,et mean pour chaque mode et les colocation point centré réduit
 Data_filtered, Data_train, mean, Var_mode, Std_mode, perc, = filter_mode(Data_shell,2*k_min_collocation,2*k_max_collocation,0,ratio,123456)
@@ -536,13 +691,14 @@ Data_filtered, Data_train, mean, Var_mode, Std_mode, perc, = filter_mode(Data_sh
 
 #Data_shell = reduced_center(Data_shell,mean,Std_mode) # centré réduit tous les modes 
 Data_ic = Data_shell[0,:] # prends tous le spoints en t=0
-random_samples = np.random.choice(Npts, size=18000, replace=False) # prends 18000 points de la partie filtrée pour les collocation points
+random_samples = np.random.choice(Npts, size=int(ratio_sample_obs*Npts), replace=False) # prends 18000 points de la partie filtrée pour les collocation points
 Data_bc = Data_shell[:,k_bc_min:2*k_bc_max] # prends tous les points de bords (shell allant de 0->3 avec 3 shell de forçage)
 print(Data_bc.shape)
 print("Moyenne de l'ensemble des mode",np.mean(Data_shell))
 print("std de tous les modes ", np.std(Data_shell))
 
-random_samples_phy = np.random.choice(Npts, size=18000, replace=False)
+random_samples_phy = np.random.choice(Npts, size=int(ratio_sample_phy*Npts), replace=False)
+U0 = np.mean(Data_shell[:,0]**2 + Data_shell[:,1]**2)
 
 #########  carateristics of the shell model ############
 
@@ -598,13 +754,14 @@ batch_size_bc = int(0.01*Npts)
 batch_size_cl = int(0.1*colocation_dataset.nb_colocation_pnt)
 batch_size_grid = int(0.01*(k_max*Npts))
 
-sampler_grid = SamplerOverGrid(100,k_min_collocation-2,k_max,Npts=Npts) 
-#batch_sampler_grid = BatchSampler(sampler=sampler_grid,batch_size=batch_size_grid,drop_last=False)
+if collocation:
+    sampler_grid = SamplerOverGrid(100,k_min_collocation-2,k_max,Npts=Npts) 
+    #batch_sampler_grid = BatchSampler(sampler=sampler_grid,batch_size=batch_size_grid,drop_last=False)
 
-Dataloader_ic = DataLoader(initial_train_dataset,batch_size=10,drop_last=False)
-Dataloader_bc = DataLoader(boundary_train_dataset,batch_size=batch_size_bc,shuffle=True,drop_last=False)
-Dataloader_cl = DataLoader(colocation_dataset,batch_size=batch_size_cl,shuffle=True,drop_last=False)
-Dataloader_grid = DataLoader(grid_dataset,batch_sampler=sampler_grid)
+    Dataloader_ic = DataLoader(initial_train_dataset,batch_size=10,drop_last=False)
+    Dataloader_bc = DataLoader(boundary_train_dataset,batch_size=batch_size_bc,shuffle=True,drop_last=False)
+    Dataloader_cl = DataLoader(colocation_dataset,batch_size=batch_size_cl,shuffle=True,drop_last=False)
+    Dataloader_grid = DataLoader(grid_dataset,batch_sampler=sampler_grid)
 
 
 # for idx,data in enumerate(Dataloader_grid):
@@ -624,7 +781,9 @@ Dataloader_grid = DataLoader(grid_dataset,batch_sampler=sampler_grid)
 
 #test_loss(Data_train=Data_shell,grille_datatset=grid_dataset)
 
-
+############################################################################################
+#             Entrainement du PINN et évaluation de la performance                         #
+############################################################################################
 
 learning_rate,nbr_iteration,w_1,w_2,w3,w_4 = 0.001,nbr_iteration,1,1,1,1
 t = Train_PINN(learning_rate,nbr_iteration,w_1,w_2,w3,w_4,sample_phy=random_samples_phy,
@@ -652,11 +811,62 @@ plt.semilogy(rmse,label='RMSE',marker='o',linestyle='None')
 plt.xlabel('numéro de couche')
 plt.ylabel('RMSE')
 plt.savefig(PATH + f"RMSE.png") #_{int(ratio*100)}
-du_dt = Total_loss[-1]
+plt.close()
 
-du_split = torch.split(du_dt,Npts)
-DUDT = torch.cat(tuple(k for k in du_split),1)
-DUDT = DUDT.cpu().detach().numpy()
+phys = Total_loss["loss_trackeur_phy"]
+# plt.figure()
+# for i in range(22):
+#     plt.semilogy(phys[i,:],label='Loss physique shell'+str(i))
+# plt.xlabel('Iterations')
+# plt.ylabel('Loss physique')
+# plt.legend()
+# plt.savefig(PATH + f"loss_phy_shells.png")
+# plt.close()
+
+n_shells = 22
+shells_per_fig = 3
+n_figs = (n_shells + shells_per_fig - 1) // shells_per_fig  # ceil division
+
+colors = cm.viridis(np.linspace(0, 1, n_shells))
+
+fig, ax = plt.subplots()
+for i in range(n_shells):
+    label = f'Shell {i}' if i in (0, n_shells // 2, n_shells - 1) else None
+    ax.semilogy(phys[i, :], color=colors[i], label=label)
+
+ax.set_xlabel('Iterations')
+ax.set_ylabel('Loss physique')
+ax.set_title('Loss physique — all shells')
+ax.legend()
+fig.savefig(PATH + "loss_phy_shells_all.png")
+plt.close(fig)
+
+
+
+lmbs_shell = Total_loss["lmb_phy_trackeur"]
+
+colors = cm.viridis(np.linspace(0, 1, n_shells))
+
+fig, ax = plt.subplots()
+for i in range(n_shells):
+    label = f'Shell {i}' if i in (0, n_shells // 2, n_shells - 1) else None
+    ax.semilogy(lmbs_shell[i, :], color=colors[i], label=label)
+
+ax.set_xlabel('Iterations')
+ax.set_ylabel('Lambda')
+ax.set_title('Lambda — all shells')
+ax.legend()
+
+fig.savefig(PATH + "lambda_shells_all.png")
+plt.close(fig)
+
+
+
+# du_dt = Total_loss[-1]
+
+# du_split = torch.split(du_dt,Npts)
+# DUDT = torch.cat(tuple(k for k in du_split),1)
+# DUDT = DUDT.cpu().detach().numpy()
 
 idx_sample = np.random.choice(random_samples, size=10, replace=False)
 idx_sample_phy = np.random.choice(random_samples_phy, size=10, replace=False)
@@ -665,14 +875,14 @@ for i in range(U.shape[1]):
     plt.plot(U_exa[:,i],label=f'Exact u{i}')
     plt.plot(U[:,i],label=f'Prédiction de u{i}')
    
-    plt.plot(idx_sample,U_exa[idx_sample,i],label=f'Points de collocation u{i}',marker='o',linestyle='None')
+    plt.plot(idx_sample,U_exa[idx_sample,i],label=f'Points observés u{i}',marker='o',linestyle='None')
     plt.plot(idx_sample_phy,[0 for j in range(len(idx_sample_phy))],label=f'Résidus u{i}',marker='x',linestyle='None')
     #plt.plot(DUDT[:,i],label = f"du/dt {i}")
     plt.xlabel('Temps')
     plt.ylabel('u')
     plt.legend()
     plt.savefig(PATH + f"/prediction_u{i}.png") #_{int(ratio*100)}
-
+    plt.close()
 
 fig, axes = plt.subplots(3, 1, figsize=(10, 12), sharex=True)
 
@@ -682,7 +892,7 @@ labels  = [1, 6, 13]
 for ax, i, lbl in zip(axes, indices, labels):
     ax.plot(U_exa[:, i],                                 label=f'Exact u{lbl}')
     ax.plot(U[:, i],                                     label=f'Prédiction de u{lbl}')
-    ax.plot(idx_sample,     U_exa[idx_sample, i],        label=f'Points de collocation u{lbl}', marker='o', linestyle='None')
+    ax.plot(idx_sample,     U_exa[idx_sample, i],        label=f'Points observés u{lbl}', marker='o', linestyle='None')
     ax.plot(idx_sample_phy, [0]*len(idx_sample_phy),     label=f'Résidus u{lbl}',               marker='x', linestyle='None')
     ax.set_ylabel(f'u{lbl}')
     ax.legend()
@@ -690,31 +900,34 @@ for ax, i, lbl in zip(axes, indices, labels):
 axes[-1].set_xlabel('Temps')
 fig.tight_layout()
 plt.savefig(PATH + "/prediction_u1_u6_u13.png")
-plt.show()
+plt.close(fig)
 
 
 #torch.save(model.state_dict(),'/Odyssey/private/s26calme/code_stage/')
 
 
 plt.figure()
-plt.semilogy(Total_loss[0],label='Loss Total')
-plt.semilogy(Total_loss[1],label='Loss Physique')
+plt.semilogy(Total_loss["loss"],label='Loss Total')
+plt.semilogy(Total_loss["loss_physics_tracker"],label='Loss Physique totale')
 #plt.plot(Total_loss[2],label='Colocation Loss')
-plt.semilogy(Total_loss[3],label='Loss observations')
-#plt.plot(Total_loss[4],label='initial Conditions Loss' )  
+plt.semilogy(Total_loss["loss_boundary_conditions_tracker"],label='Loss observations')
+plt.plot(Total_loss["loss_initial_conditions_tracker"],label='initial Conditions Loss' )  
 plt.xlabel('Iterations')
 plt.ylabel('Losses')
 plt.legend()
 plt.savefig(PATH + f"losses.png") #_{int(ratio*100)}
+plt.close()
+
 
 plt.figure()
-plt.semilogy(Total_loss[-3],label='lmb obs')
-plt.semilogy(Total_loss[-2],label='lmb phy')
+plt.semilogy(Total_loss["lmb_tracker_bc"],label='lmb obs')
+#plt.semilogy(Total_loss["lmb_physics_trackeur"],label='lmb phy')
+plt.semilogy(Total_loss["lmb_ic_trackeur"],label='lmb ic')
 plt.xlabel('Iterations')
 plt.ylabel('Lambda')
 plt.legend()
 plt.savefig(PATH + f"lambda.png") #_{int(ratio*100)}
-
+plt.close()
 
 n  = U_exa.shape[1]    # nb de composantes réelles (re + im par couche)
 nb = U_exa.shape[0]        # nb de pas de temps

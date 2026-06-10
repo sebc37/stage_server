@@ -21,7 +21,7 @@ class GOY_PINN(nn.Module):
         super().__init__()
         # self.B_b = torch.randn(batch_size).to(device)
         # self.B_ic = torch.randn(ic_size).to(device)
-        
+        #self.norm =nn.BatchNorm1d(n_hidden)
         self.B_fourier = torch.randn(n_input, n_fourier).to(device) * sigma
         fourier_out_dim = 2 * n_fourier
 
@@ -59,8 +59,10 @@ class GOY_PINN(nn.Module):
         # fourier_features = torch.cat([torch.cos(x),torch.sin(x)])
         # print('fourirer :' ,fourier_features.shape)
         # fourier_features = fourier_features.unsqueeze(-1)
+        #x = self.norm(x)
         x = self.fourier_embed(x)
         x=self.input_layer(x)
+        #x = self.norm(x)
         x=self.hidden_layers(x)
         x=self.output_layer(x)
 
@@ -244,7 +246,7 @@ class Multilple_Lorenz(Dataset):
 # calcul des loss
 
 class DynamicLossWeighter:
-    def __init__(self, alpha=0.9):
+    def __init__(self, alpha=0.9,N=22,ic=1,bc=1,phy=1):
         """
         alpha: coefficient du moving average (ex: 0.9)
         """
@@ -253,12 +255,22 @@ class DynamicLossWeighter:
         self.lambda_ic  = 1/3
         self.lambda_bc  = 1/3
         self.lambda_r   = 1/3
+       
+        self.bc = bc
+        self.ic = ic
+        self.phy = phy  
+        if self.phy:
+            self.lmb_phy = [1/N for i in range(N)]
+        else:
+            self.lmb_phy = 1/3
+            
 
-    def compute_weights(self, loss_ic, loss_bc, loss_r, model_params):
+
+    def compute_weights(self, loss_ic, loss_bc, loss_phy, model_params):
         """
         Calcule les nouveaux poids lambda selon les normes des gradients.
         
-        loss_ic, loss_bc, loss_r : tenseurs scalaires (non réduits)
+        loss_ic, loss_bc, loss_phy : tenseurs scalaires (non réduits)
         model_params : list(model.parameters())
         """
 
@@ -277,21 +289,65 @@ class DynamicLossWeighter:
                 #print("type of g : ", type(g))
                 #print(torch.mean(g))
             return total.sqrt()
+        
+        #################################################################
+        # calcul de la norme du gradient de la loss de chaque composante#
+        #################################################################
+        if self.bc:
+            norm_bc = grad_norm(loss_bc)
+        else:
+            norm_bc = 0
+        
+        if self.ic:
+            norm_ic = grad_norm(loss_ic)    
+        else:
+            norm_ic = 0
 
-        #norm_ic = grad_norm(loss_ic)
-        norm_bc = grad_norm(loss_bc)
-        norm_r  = grad_norm(loss_r)
+        # calcul de la norme pour chaque loss de physique
+        if self.phy:
+            grad_shell_list = []
+            for l in loss_phy:
+                norm_phy  = grad_norm(l)
+                grad_shell_list.append(norm_phy)
+            total =  norm_ic+ norm_bc + sum(grad_shell_list)
+        else:
+
+            norm_phy = grad_norm(loss_phy)
+            total = norm_ic + norm_bc + norm_phy
+            #grad_shell_list = [0 for i in range(len(loss_phy))]
+        print("norme ic : ", norm_ic, type(norm_ic))
+        print("norme phy : ",grad_shell_list, type(grad_shell_list))
+        print("norme bc : " , norm_bc, type(norm_bc))
         #print("norme bc : " , norm_bc, type(norm_bc))
         #print("norme phy : ",norm_r, type(norm_r))
-        total =  + norm_bc + norm_r #+norm_ic # dénominateur commun du numérateur
+        #norm_r #+norm_ic # dénominateur commun du numérateur
+        print("total : ", total, type(total)   )
+        #################################################################
+        # calcul des nouveaux facteurs de normalisation pour chaque loss#
+        #################################################################
+        if norm_ic != 0:
+            lambda_ic_hat = total / norm_ic
+        else:
+            lambda_ic_hat = 0
 
-        # Formules de l'image
-        lambda_ic_hat = 0#total / norm_ic
-        lambda_bc_hat = total / norm_bc
-        lambda_r_hat  = total / norm_r
+        if norm_bc != 0:
+            lambda_bc_hat = total / norm_bc
+        else:
+            lambda_bc_hat = 0
+
+        #lambda_r_hat  = total / norm_r # il ya pas de lambda r quand on normalise pour toutes les shells ()
+        if self.phy:
+            lmbphy_hat_list = [] # tous les nouveaux lambdas physiques
+            for lmb in grad_shell_list:
+                lmbphy_hat_list.append(total / lmb)
+        else:
+            lmbphy_hat_list = total / norm_phy
+        print("lmb ic pondéré : ",lambda_ic_hat,type(lambda_ic_hat))
+        print("lmb bc pondéré : ",lambda_bc_hat,type(lambda_bc_hat))
+        print("lmb phy pondéré : ",lmbphy_hat_list, type(lmbphy_hat_list))
         #print("lmb bc pondéré : ",lambda_bc_hat,type(lambda_bc_hat))
         #print("lmb phy pondéré : ",lambda_r_hat,type(lambda_r_hat))
-        return  lambda_bc_hat, lambda_r_hat ,lambda_ic_hat
+        return  lambda_ic_hat,lambda_bc_hat ,lmbphy_hat_list #lambda_r_hat
 
     def update(self, loss_ic, loss_bc, loss_r, model_params):
         """
@@ -299,22 +355,34 @@ class DynamicLossWeighter:
             lambda_new = alpha * lambda_old + (1 - alpha) * lambda_hat_new
         """
         with torch.no_grad():
-            l_ic, l_bc, l_r = self.compute_weights(
+            l_ic, l_bc, lmbphy_list = self.compute_weights(
                 loss_ic, loss_bc, loss_r, model_params
             )
             
             self.lambda_ic = self.alpha * self.lambda_ic + (1 - self.alpha) * l_ic#.item()
             self.lambda_bc = self.alpha * self.lambda_bc + (1 - self.alpha) * l_bc#.item()
-            self.lambda_r  = self.alpha * self.lambda_r  + (1 - self.alpha) * l_r#.item()
+            #self.lambda_r  = self.alpha * self.lambda_r  + (1 - self.alpha) * l_r#.item()
+            # Mettre à jour les poids physiques
+            if self.phy:
+                for i, lmb in enumerate(lmbphy_list):
+                    self.lmb_phy[i] = self.alpha * self.lmb_phy[i] + (1 - self.alpha) * lmb#.item()
+            else:
+                self.lmb_phy = self.alpha * self.lmb_phy + (1 - self.alpha) * lmbphy_list#.item()
 
-        
 
     def weighted_loss(self, loss_ic, loss_bc, loss_r):
         """Retourne la loss totale pondérée."""
         #print("lmb used bc : ",self.lambda_bc,type(self.lambda_bc))
         #print("lmb used phy : ",self.lambda_r,type(self.lambda_r))
-        return (
-            #self.lambda_ic * loss_ic +
-            self.lambda_bc * loss_bc +
-            self.lambda_r  * loss_r
-        )
+        if self.phy:
+            return (
+                self.lambda_ic * loss_ic +
+                self.lambda_bc * loss_bc +
+                + sum(l * r for l, r in zip(self.lmb_phy, loss_r))
+            )
+        else:
+            return (
+                self.lambda_ic * loss_ic +
+                self.lambda_bc * loss_bc +
+                self.lmb_phy * loss_r
+            )

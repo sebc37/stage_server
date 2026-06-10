@@ -1,0 +1,23 @@
+PINN:
+    - 64
+    - 8
+
+ratio: 0.05          # fraction des points d'observation  (0 < ratio <= 1)
+
+k_min_boundary: 0
+k_max_boundary: 22
+k_min_collocation: 4
+k_max_collocation: 22
+
+nb_iter: 15000
+
+path_data: "/Odyssey/private/s26calme/code_stage/GOY-main/data.dat"
+path_graph: "/Odyssey/private/s26calme/code_stage/GOY-main/8x64_15k_norm_phy/"
+
+physic: 1
+initial: 1
+collocation: 0
+normalize_phy: 0
+inline_phy: 0
+ratio_sample_obs: 0.1
+ratio_sample_phy: 1.0
