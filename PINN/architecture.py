@@ -10,8 +10,8 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def init_weights(m):
     if isinstance(m, nn.Linear):
-        nn.init.xavier_uniform_(m.weight)
-        nn.init.zeros_(m.bias)
+        nn.init.xavier_uniform_(m.weight).double()
+        nn.init.zeros_(m.bias).double()
 
 
 
@@ -22,27 +22,27 @@ class GOY_PINN(nn.Module):
         # self.B_b = torch.randn(batch_size).to(device)
         # self.B_ic = torch.randn(ic_size).to(device)
         #self.norm =nn.BatchNorm1d(n_hidden)
-        self.B_fourier = torch.randn(n_input, n_fourier).to(device) * sigma
+        self.B_fourier = torch.randn(n_input, n_fourier,dtype=torch.float64).to(device) * sigma
         fourier_out_dim = 2 * n_fourier
 
         activation = nn.Tanh
         self.input_layer = nn.Sequential(*[
                                     nn.Linear(fourier_out_dim, n_hidden),
-                                    activation()])#.to(device)
+                                    activation()]).double()#.to(device)
 
         self.hidden_layers = nn.Sequential(*[
                         nn.Sequential(*[
                             nn.Linear(n_hidden, n_hidden),
-                            activation()]) for _ in range(n_layers-1)])#.to(device)
+                            activation()]) for _ in range(n_layers-1)]).double()#.to(device)
 
-        self.output_layer = nn.Linear(n_hidden, n_output)#.to(device)
+        self.output_layer = nn.Linear(n_hidden, n_output).double()#.to(device)
         self.apply(init_weights)
         
     def fourier_embed(self, x):
         # x: (batch, n_input)
         # Projects to frequency space, then maps to [sin, cos] features
-        x_proj = 2 * torch.pi * x @ self.B_fourier   # (batch, n_fourier)
-        return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)  # (batch, 2*n_fourier)
+        x_proj = 2 * torch.pi * x.double() @ self.B_fourier   # (batch, n_fourier)
+        return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1).double()  # (batch, 2*n_fourier)
 
     def forward(self,x):
         # self.B = torch.randn((x.shape)).to(device)
@@ -60,11 +60,12 @@ class GOY_PINN(nn.Module):
         # print('fourirer :' ,fourier_features.shape)
         # fourier_features = fourier_features.unsqueeze(-1)
         #x = self.norm(x)
-        x = self.fourier_embed(x)
-        x=self.input_layer(x)
+        x.double()
+        x = self.fourier_embed(x).double()
+        x=self.input_layer(x).double()
         #x = self.norm(x)
-        x=self.hidden_layers(x)
-        x=self.output_layer(x)
+        x=self.hidden_layers(x).double()
+        x=self.output_layer(x).double()
 
         return x
     
