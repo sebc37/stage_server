@@ -163,7 +163,7 @@ class colocations_variables_data(Dataset):
     def __getitem__(self,idx):
 
         # return the element in that index (k,t,u)[idx]
-        return self.tensor_data_colocation[idx,0],self.tensor_data_colocation[idx,1],self.tensor_data_colocation[idx,2] #float(self.X_Data_train[idx][0]),float(self.X_Data_train[idx][1]) ,torch.tensor(self.X_Data_train[idx][2])   #return the x and t values of the grid and value of X for the physics loss
+        return self.tensor_data_colocation[idx,0],self.tensor_data_colocation[idx,1]#,self.tensor_data_colocation[idx,2] #float(self.X_Data_train[idx][0]),float(self.X_Data_train[idx][1]) ,torch.tensor(self.X_Data_train[idx][2])   #return the x and t values of the grid and value of X for the physics loss
         #return self.x[j],self.t[i]  # This class only returns the x and t values of the grid not the velocity
 
 
