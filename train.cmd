@@ -1,0 +1,1 @@
+python C:\Users\sebc3\Documents\M2\Stage\batch_base\stage_server\PINN\pinn_goy_s_batch.py C:\Users\sebc3\Documents\M2\Stage\batch_base\stage_server\param.yaml

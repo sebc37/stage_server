@@ -1,3 +1,8 @@
 *.dat
 *.log
 *error_*.txt
+*.pth
+*.pt
+.venv/
+.env
+.vscode/

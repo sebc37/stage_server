@@ -16,24 +16,45 @@ class SamplerOverGrid(Sampler):
         self.k_min_grid = k_min_grid
         self.k_max_grid = k_max_grid
         self.Npts = Npts
-    def __iter__(self):
-        for _ in range(self.__len__()):
-            indice = torch.randint(0,self.Npts-self.m,(1,))
-            nb_k = self.k_max_grid - self.k_min_grid
-            indices = torch.ones(nb_k*self.m,dtype=torch.int32)
-            #if self.k_min_grid == 0:
-            for i in range(0,self.m):
-                indices[i] = indice + i + self.k_min_grid*self.Npts
-            for k in range(1,self.k_max_grid-self.k_min_grid):
-                for i in range(0,self.m):        
-                    indices[i+ k*self.m] = int((k+self.k_min_grid)*(self.Npts)) + indice.item() + i
-        # else : 
+    # def __iter__(self):
+    #     # nb_k = self.k_max_grid - self.k_min_grid
+    #     # indices = torch.zeros((self.__len__(),nb_k,self.m),dtype=torch.int32)
+
+    #     for _ in range(self.__len__()): #pour chaque batch (N/m) on tire un indice au hasard entre 0 et Npts-m, puis on prend m points consécutifs à partir de cet indice pour chaque shell
+    #         indice = torch.randint(0,self.Npts-self.m,(1,))
+    #         #print(f'sampler indice {indice}')
+    #         nb_k = self.k_max_grid - self.k_min_grid
+    #         indices = torch.zeros((nb_k,self.m),dtype=torch.int32)
+    #         #if self.k_min_grid == 0:
+    #         for i in range(self.m):
+    #             indices[0][i] = indice.item() + i + self.k_min_grid*self.Npts
+    #         for k in range(1,self.k_max_grid-self.k_min_grid):
+    #             for i in range(self.m):        
+    #                 indices[k][i] = int((k+self.k_min_grid)*(self.Npts)) + indice.item() + i
+            
+    #     # else : 
            
-        #     for k in range(self.k_min_grid,self.k_max_grid):
-        #         for i in range(0,self.m):        
-        #             indices[i+ (k-self.k_min_grid)*self.m] = int(k*(self.Npts)) + indice.item() + i
-            print(f'sampler {indices}')
-            yield indices.tolist()
+    #     #     for k in range(self.k_min_grid,self.k_max_grid):
+    #     #         for i in range(0,self.m):        
+    #     #             indices[i+ (k-self.k_min_grid)*self.m] = int(k*(self.Npts)) + indice.item() + i
+    #         print(f'retour du sampler')
+    #         yield indices.tolist()
+    def __iter__(self):
+        nb_k = self.k_max_grid - self.k_min_grid
+
+        for _ in range(self.__len__()):
+            indice = torch.randint(0, self.Npts - self.m, (1,)).item()
+
+            k_range = torch.arange(self.k_min_grid, self.k_max_grid)          # (nb_k,)
+            t_range = torch.arange(indice, indice + self.m)                   # (m,)
+
+            # broadcasting : (nb_k,1)*Npts + (1,m) -> (nb_k,m)
+            indices = (k_range.view(-1,1) * self.Npts) + t_range.view(1,-1)
+
+            yield indices.reshape(-1).tolist()
+
+    def __len__(self):
+        return int(self.Npts // self.m)
                 
     def __len__(self):
         return int(self.Npts // self.m)

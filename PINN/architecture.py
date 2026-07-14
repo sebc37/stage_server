@@ -25,7 +25,7 @@ class GOY_PINN(nn.Module):
         self.B_fourier = torch.randn(n_input, n_fourier).to(device) * sigma
         fourier_out_dim = 2 * n_fourier
 
-        activation = nn.Tanh
+        activation = nn.SiLU
         self.input_layer = nn.Sequential(*[
                                     nn.Linear(fourier_out_dim, n_hidden),
                                     activation()])#.to(device)
@@ -114,12 +114,12 @@ class boundary_variables_data(Dataset):
         self.nb_k = np.shape(X_boundary)[1]
         self.nb_t = np.shape(X_boundary)[0]
        
-        time = torch.arange(0.1*time,time,0.9*time/Npts,dtype=torch.float32) #(time/f)*1/N_fs  #10*(f-0.1)*dt
+        time = torch.arange(0,time,time/Npts,dtype=torch.float32) #(time/f)*1/N_fs  #10*(f-0.1)*dt
         shell = torch.arange(0,self.X_boundary.shape[1],1,dtype=torch.float32)
         grid_shell,grid_time = torch.meshgrid(shell,time[mask],indexing="xy")
         grid_shell = grid_shell.T.contiguous().view(len(self.mask)*self.X_boundary.shape[1],1) #Npts*self.X_boundary.shape[1]
         grid_time = grid_time.T.contiguous().view(len(self.mask)*self.X_boundary.shape[1],1) #Npts*self.X_boundary.shape[1]
-        u_bc = torch.tensor(X_boundary[self.mask,:]).T.contiguous().view(len(self.mask)*self.X_boundary.shape[1],1) #Npts*self.X_boundary.shape[1]
+        u_bc = torch.tensor(self.X_boundary).T.contiguous().view(len(self.mask)*self.X_boundary.shape[1],1) #Npts*self.X_boundary.shape[1]
         self.tensor_data_bc = torch.stack((grid_shell,grid_time,u_bc),1).view(len(self.mask)*self.X_boundary.shape[1],3) #Npts*self.X_boundary.shape[1]
         
         ############################### version boucle long ###############################
@@ -136,7 +136,8 @@ class boundary_variables_data(Dataset):
         
     def __len__(self):
         #return the lenght of the dataset
-        return self.nb_k*self.nb_t
+        #return self.nb_k*self.nb_t
+        return self.tensor_data_bc.shape[0] 
     def __getitem__(self,idx):
 
         # return the element in that index (k,t,u)[idx] 
@@ -176,6 +177,7 @@ class grid_data(Dataset): # créer la grille sur laquelle on veut inferer U(k,t)
         self.t_max = t_max
         self.x = torch.arange(k_min,2*k_max,1,dtype=torch.float32)
         self.t = torch.arange(t_min,t_max,(t_max-t_min)/Npts,dtype=torch.float32)
+        #self.t = torch.linspace(t_min, t_max, Npts, dtype=torch.float32)
         self.grid_k,self.grid_t = torch.meshgrid(self.x,self.t,indexing="xy")
         self.grid_k = self.grid_k.T.contiguous().view(Npts*(2*k_max-k_min),1)
         self.grid_t = self.grid_t.T.contiguous().view(Npts*(2*k_max-k_min),1)
@@ -266,7 +268,7 @@ class DynamicLossWeighter:
             
 
 
-    def compute_weights(self, loss_ic, loss_bc, loss_phy, model_params):
+    def compute_weights(self, loss_ic, loss_bc, loss_phy, model_params, epoch):
         """
         Calcule les nouveaux poids lambda selon les normes des gradients.
         
@@ -278,7 +280,7 @@ class DynamicLossWeighter:
             """Calcule la norme L2 du gradient de `loss` par rapport aux paramètres."""
             grads = torch.autograd.grad(
                 loss, model_params,
-                retain_graph=True, create_graph=False, allow_unused=True
+                retain_graph=True, create_graph=True, allow_unused=True
             )
             #print("shape : " , len(grads))
             total = sum(
@@ -315,23 +317,23 @@ class DynamicLossWeighter:
             norm_phy = grad_norm(loss_phy)
             total = norm_ic + norm_bc + norm_phy
             #grad_shell_list = [0 for i in range(len(loss_phy))]
-        print("norme ic : ", norm_ic, type(norm_ic))
-        print("norme phy : ",grad_shell_list, type(grad_shell_list))
-        print("norme bc : " , norm_bc, type(norm_bc))
+        # print("norme ic : ", norm_ic, type(norm_ic))
+        # print("norme phy : ",grad_shell_list, type(grad_shell_list))
+        # print("norme bc : " , norm_bc, type(norm_bc))
         #print("norme bc : " , norm_bc, type(norm_bc))
         #print("norme phy : ",norm_r, type(norm_r))
         #norm_r #+norm_ic # dénominateur commun du numérateur
-        print("total : ", total, type(total)   )
+        #print("total : ", total, type(total)   )
         #################################################################
         # calcul des nouveaux facteurs de normalisation pour chaque loss#
         #################################################################
         if norm_ic != 0:
-            lambda_ic_hat = total / norm_ic
+            lambda_ic_hat =  total / norm_ic # np.exp(-(10/(2*(epoch+1-10)))) * torch.log( +1)
         else:
             lambda_ic_hat = 0
 
         if norm_bc != 0:
-            lambda_bc_hat = total / norm_bc
+            lambda_bc_hat =  total / norm_bc #np.exp(-(10/(2*(epoch+1-10)))) * torch.log( +1)
         else:
             lambda_bc_hat = 0
 
@@ -339,25 +341,25 @@ class DynamicLossWeighter:
         if self.phy:
             lmbphy_hat_list = [] # tous les nouveaux lambdas physiques
             for lmb in grad_shell_list:
-                lmbphy_hat_list.append(total / lmb)
+                lmbphy_hat_list.append( total / lmb ) #np.exp(-(10/(2*(epoch+1-10)))) * torch.log( +1)
         else:
-            lmbphy_hat_list = total / norm_phy
-        print("lmb ic pondéré : ",lambda_ic_hat,type(lambda_ic_hat))
-        print("lmb bc pondéré : ",lambda_bc_hat,type(lambda_bc_hat))
-        print("lmb phy pondéré : ",lmbphy_hat_list, type(lmbphy_hat_list))
+            lmbphy_hat_list = total / norm_phy  #np.exp(-(10/(2*(epoch+1-10)))) * torch.log( +1)
+        # print("lmb ic pondéré : ",lambda_ic_hat,type(lambda_ic_hat))
+        # print("lmb bc pondéré : ",lambda_bc_hat,type(lambda_bc_hat))
+        # print("lmb phy pondéré : ",lmbphy_hat_list, type(lmbphy_hat_list))
         #print("lmb bc pondéré : ",lambda_bc_hat,type(lambda_bc_hat))
         #print("lmb phy pondéré : ",lambda_r_hat,type(lambda_r_hat))
         return  lambda_ic_hat,lambda_bc_hat ,lmbphy_hat_list #lambda_r_hat
 
-    def update(self, loss_ic, loss_bc, loss_r, model_params):
+    def update(self, loss_ic, loss_bc, loss_r, model_params,epoch):
         """
         Met à jour les poids avec le moving average :
             lambda_new = alpha * lambda_old + (1 - alpha) * lambda_hat_new
         """
         with torch.no_grad():
             l_ic, l_bc, lmbphy_list = self.compute_weights(
-                loss_ic, loss_bc, loss_r, model_params
-            )
+                loss_ic, loss_bc, loss_r, model_params,
+            epoch)
             
             self.lambda_ic = self.alpha * self.lambda_ic + (1 - self.alpha) * l_ic#.item()
             self.lambda_bc = self.alpha * self.lambda_bc + (1 - self.alpha) * l_bc#.item()
@@ -370,7 +372,7 @@ class DynamicLossWeighter:
                 self.lmb_phy = self.alpha * self.lmb_phy + (1 - self.alpha) * lmbphy_list#.item()
 
 
-    def weighted_loss(self, loss_ic, loss_bc, loss_r):
+    def weighted_loss(self, loss_ic, loss_bc, loss_r, epoch):
         """Retourne la loss totale pondérée."""
         #print("lmb used bc : ",self.lambda_bc,type(self.lambda_bc))
         #print("lmb used phy : ",self.lambda_r,type(self.lambda_r))
@@ -378,7 +380,7 @@ class DynamicLossWeighter:
             return (
                 self.lambda_ic * loss_ic +
                 self.lambda_bc * loss_bc +
-                + sum(l * r for l, r in zip(self.lmb_phy, loss_r))
+                + sum(np.exp(-(10/(2*(epoch+1-10)))) * l * r for l, r in zip(self.lmb_phy, loss_r))
             )
         else:
             return (

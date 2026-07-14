@@ -1,0 +1,23 @@
+PINN:
+    - 64
+    - 8
+
+ratio: 0.05          # fraction des points d'observation  (0 < ratio <= 1)
+
+k_min_boundary: 0
+k_max_boundary: 22
+k_min_collocation: 0
+k_max_collocation: 22
+
+nb_iter: 200
+
+path_data: "C:\\Users\\sebc3\\Documents\\M2\\Stage\\batch_base\\stage_server\\GOY-main\\data.dat"
+path_graph: "C:\\Users\\sebc3\\Documents\\M2\\Stage\\batch_base\\test\\"
+
+physic: 0
+initial: 0
+collocation: 1
+normalize_phy: 0
+inline_phy: 0
+ratio_sample_obs: 0.1
+ratio_sample_phy: 0.1
