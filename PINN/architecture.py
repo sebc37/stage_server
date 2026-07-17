@@ -22,10 +22,11 @@ class GOY_PINN(nn.Module):
         # self.B_b = torch.randn(batch_size).to(device)
         # self.B_ic = torch.randn(ic_size).to(device)
         #self.norm =nn.BatchNorm1d(n_hidden)
-        self.B_fourier = torch.randn(n_input, n_fourier).to(device) * sigma
+        B_fourier = torch.randn(n_input, n_fourier,dtype=torch.float64).to(device) * sigma
+        self.register_buffer("B_fourier", B_fourier)
         fourier_out_dim = 2 * n_fourier
 
-        activation = nn.SiLU
+        activation = nn.Tanh
         self.input_layer = nn.Sequential(*[
                                     nn.Linear(fourier_out_dim, n_hidden),
                                     activation()])#.to(device)
@@ -37,10 +38,12 @@ class GOY_PINN(nn.Module):
 
         self.output_layer = nn.Linear(n_hidden, n_output)#.to(device)
         self.apply(init_weights)
-        
+        self.double()
     def fourier_embed(self, x):
         # x: (batch, n_input)
         # Projects to frequency space, then maps to [sin, cos] features
+        #B = self.B_fourier.to(dtype=x.dtype, device=x.device)
+        #x_proj = 2 * torch.pi * x @ B
         x_proj = 2 * torch.pi * x @ self.B_fourier   # (batch, n_fourier)
         return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)  # (batch, 2*n_fourier)
 
@@ -101,7 +104,7 @@ class initials_variables_data(Dataset):
 
     def __getitem__(self,idx):
 
-        return self.tensor_data[idx,0], self.tensor_data[idx,1], self.tensor_data[idx,2]  #return the x and t values of the grid and value of X for the initial condition
+        return self.tensor_data[idx,0].double(), self.tensor_data[idx,1].double(), self.tensor_data[idx,2]  #return the x and t values of the grid and value of X for the initial condition
     
 
 # classe pour transformer les données en jeu de donnée des conditions de bord 
@@ -141,7 +144,7 @@ class boundary_variables_data(Dataset):
     def __getitem__(self,idx):
 
         # return the element in that index (k,t,u)[idx] 
-        return self.tensor_data_bc[idx,0],self.tensor_data_bc[idx,1],self.tensor_data_bc[idx,2]
+        return self.tensor_data_bc[idx,0].double(),self.tensor_data_bc[idx,1].double(),self.tensor_data_bc[idx,2].double()
     
 
 # classe pour transformer les données en jeu de donnée des collocations points
@@ -204,7 +207,7 @@ class grid_data(Dataset): # créer la grille sur laquelle on veut inferer U(k,t)
 
     def __getitem__(self,idx):
         #print(f'idx {idx}')
-        return self.grid[idx,0],self.grid[idx,1],idx  # This class only returns the x and t values of the grid not the velocity
+        return self.grid[idx,0].double(),self.grid[idx,1].double(),idx  # This class only returns the x and t values of the grid not the velocity
 
 class Lorenz_Dataset(Dataset):
     def __init__(self,path_data,dt,n):

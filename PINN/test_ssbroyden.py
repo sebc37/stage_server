@@ -491,7 +491,9 @@ class SSBroydenOptimizer:
             for name, shape, size in zip(names, shapes, sizes):
                 param_dict[name] = theta[idx : idx + size].reshape(shape)
                 idx += size
-
+            for buf_name, buf in model.named_buffers():
+                if buf.dtype != theta.dtype:
+                    buf.data = buf.data.to(theta.dtype)
             # ---- Functional model: no in-place .data write ----
             # We create a wrapper so that loss_fn_user(model, *args)
             # internally uses our differentiable param_dict

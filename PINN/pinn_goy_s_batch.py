@@ -1,5 +1,6 @@
 import os
 import numpy as np
+from test_ssbroyden import *
 from custom_sampler import *
 from architecture import *
 from parser import *
@@ -14,12 +15,12 @@ import tqdm
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import argparse
-from test_ssbroyden import *
+
 
 
 class Train_PINN():
 
-    def __init__(self,learning_rate,nbr_iteration,w_1,w_2,w_3,w_4,sample_phy,iteration=False,epoch=5,physic=True,collocation=True,initial=True,normalize_phy=True,inline_phy=True,normalize_energie=0):
+    def __init__(self,learning_rate,nbr_iteration,w_1,w_2,w_3,w_4,sample_phy,iteration=False,epoch=15,physic=True,collocation=True,initial=True,normalize_phy=True,inline_phy=True,normalize_energie=0):
         self.learning_rate = learning_rate
         self.nbr_iteration = nbr_iteration
         self.w_1 = w_1
@@ -91,16 +92,16 @@ class Train_PINN():
             loss_colocation = loss_colocation/(360)
             return loss_colocation
         
-        def batch_bc_losses(it_bc,Dataloader_bc):
+        def batch_bc_losses(model,it_bc,Dataloader_bc):
             try:
                 bc = next(it_bc)
             except StopIteration:
                 it_bc = iter(Dataloader_bc)
                 bc = next(it_bc)
 
-            bc_pred = torch.stack((bc[0], bc[1])).T.to(device)
+            bc_pred = torch.stack((bc[0], bc[1])).T.double().to(device)
             u_pd_bc = model(bc_pred)
-            u_exa_bc = bc[2].to(device)
+            u_exa_bc = bc[2].double().to(device)
             loss_boundary_conditions = self.w_2 * loss_func(u_pd_bc, u_exa_bc)
             # if step >= n_steps - 2:
             #     loss_bc_update = loss_boundary_conditions.clone().requires_grad_().detach()
@@ -108,17 +109,17 @@ class Train_PINN():
             #     loss = loss + loss_boundary_conditions
             return loss_boundary_conditions
 
-        def batch_ic_losses(it_ic,Dataloader_ic):
+        def batch_ic_losses(model,it_ic,Dataloader_ic):
             try:
                 ic = next(it_ic)
             except StopIteration:
                 it_ic = iter(Dataloader_ic)
                 ic = next(it_ic)
 
-            ic_pred = torch.stack((ic[0], ic[1])).T.to(device)
+            ic_pred = torch.stack((ic[0], ic[1])).T.double().to(device)
             ic_pred.requires_grad_()
             u_pd_ini = model(ic_pred)
-            u_exa_ini = ic[2].to(device)
+            u_exa_ini = ic[2].double().to(device)
             loss_initial_conditions = self.w_1 * loss_func(u_pd_ini, u_exa_ini)
             # if step >= n_steps - 2:
             #     loss_ini_update = loss_initial_conditions.clone().requires_grad_().detach()
@@ -128,7 +129,7 @@ class Train_PINN():
 
 
 
-        def physics_losses(weight=False):
+        def physics_losses(model,it_grid,Dataloader_grid, epoch,weight=False,double=False):
 
             # loss = torch.tensor(0.0, device=device)
 
@@ -136,7 +137,21 @@ class Train_PINN():
             # loss_boundary_conditions = torch.tensor(0.0, device=device)
             # loss_colocation = torch.tensor(0.0, device=device)
             #loss_physics = torch.tensor(0.0, device=device)
+            try:
+                grid_batch = next(it_grid)
+            except StopIteration:
+                it_grid = iter(Dataloader_grid)
+                grid_batch = next(it_grid)
 
+            # grid_batch attendu : (k, t, idx) ou équivalent selon grid_data
+            # à adapter selon la sortie exacte de votre Dataset/Sampler
+            #nb_time_grid = 256 # ##################################################################################################
+            grid_k, grid_t, grid_idx = grid_batch
+            if double:
+                grid_train_data = torch.stack((grid_k, grid_t)).T.double().to(device)
+            else:
+                grid_train_data = torch.stack((grid_k, grid_t)).T.double().to(device)
+            grid_train_data.requires_grad_()
             #grid_train_data = grid_dataset.grid.requires_grad_(True).to(device)
             #print("strat")
             time_batch_size = 512 
@@ -211,12 +226,13 @@ class Train_PINN():
 
             if weight:            
                 list_loss_phy = []
+
                 for i in range(len(weighter.lmb_phy)):
                     list_loss_phy.append(weighter.lmb_phy[i] * torch.mean((GOY_physics_real[:,i]**2 + GOY_physics_im[:,i]**2)).to(device))
                 return list_loss_phy
             
             else:
-                loss_physics = np.exp(-(10/(2*(ep+1-10)))) * torch.mean((GOY_physics_real[:,i]**2 + GOY_physics_im[:,i]**2)).to(device)
+                loss_physics = np.exp(-(10/(2*(epoch+1)))) * torch.mean((GOY_physics_real[:,i]**2 + GOY_physics_im[:,i]**2)).to(device)
 
             
                 #loss_physics = np.exp(-(10/(2*ep+1-10))) * loss_physics
@@ -248,21 +264,21 @@ class Train_PINN():
 
             return loss_physics
         
-        def total_loss(it_bc,Dataloader_bc,it_ic,Dataloader_ic,weight,ep,step,n_step):
+        def total_loss(model,it_grid,Dataloader_grid,it_bc,Dataloader_bc,it_ic,Dataloader_ic,weight,ep,step,n_steps,double):
             loss = 0
             if weight:
-                loss_ic = batch_ic_losses(it_ic,Dataloader_ic)
-                loss_obs = batch_bc_losses(it_bc,Dataloader_bc)
-                loss_phy = physics_losses(weight=weight)
+                loss_ic = batch_ic_losses(model,it_ic,Dataloader_ic)
+                loss_obs = batch_bc_losses(model,it_bc,Dataloader_bc)
+                loss_phy = physics_losses(model,it_grid=it_grid,Dataloader_grid=Dataloader_grid,epoch=ep,weight=weight,double=double)
                 loss = weighter.weighted_loss(loss_ic=loss_ic,loss_bc=loss_obs,loss_r=loss_phy)
-                if step%int(n_step/2)==0:
-                    weighter.update(loss_ic=loss_ic,loss_bc=loss_obs,loss_r=loss_phy)
+                if step%int(n_steps/2)==0:
+                    weighter.update(loss_ic=loss_ic,loss_bc=loss_obs,loss_r=loss_phy,model_params=list(model.parameters()),epoch=ep)
             else:
     
-                loss_ic = batch_ic_losses(it_ic,Dataloader_ic)
-                loss_obs = batch_bc_losses(it_bc,Dataloader_bc)
+                loss_ic = batch_ic_losses(model,it_ic,Dataloader_ic)
+                loss_obs = batch_bc_losses(model,it_bc,Dataloader_bc)
                 if physic:
-                    loss_phy = physics_losses()
+                    loss_phy = physics_losses(model,it_grid=it_grid,Dataloader_grid=Dataloader_grid,epoch=ep,weight=weight,double=double)
                 else:
                     loss_phy = 0
                 loss = loss_ic + loss_obs + loss_phy
@@ -586,8 +602,25 @@ class Train_PINN():
                     lmb_phy_trackeur[i,iteration] = weighter.lmb_phy[i].cpu().detach().numpy()
 
         else:
+            print(sum(p.numel() for p in model.parameters() if p.requires_grad))
+
+            self.optimizer_ss_b = SSBroydenOptimizer(
+                        model=model,
+                        loss_fn=total_loss,          # <-- directement ta fonction, RIEN d'autre
+                        update_method="ssbroyden2",
+                        maxiter_inner=30,
+                        gtol=1e-9,
+                        initial_scale=True,
+                        ls_c1=1e-4,
+                        ls_c2=0.9,
+                        ls_maxiter=25,
+                        damping=1e-8,
+                        verbose=False,
+                    )
             #params = list(model.parameters())
             loss_func = torch.nn.MSELoss()
+            ep_broyden = 4
+        
             for ep in tqdm.tqdm(range(self.epoch)):
 
                 epoch_loss_total = 0.0
@@ -616,139 +649,146 @@ class Train_PINN():
                 n_steps = max(lengths) if lengths else 0
                 loss_batch_tracker = torch.zeros(n_steps, device=device)
                 for step in range(n_steps):
+                    if ep <ep_broyden:
+                        self.optimizer.zero_grad()
+                        loss = torch.tensor(0.0, device=device)
 
-                    self.optimizer.zero_grad()
-                    loss = torch.tensor(0.0, device=device)
+                        loss_initial_conditions = torch.tensor(0.0, device=device)
+                        loss_boundary_conditions = torch.tensor(0.0, device=device)
+                        loss_colocation = torch.tensor(0.0, device=device)
+                        loss_physics = torch.tensor(0.0, device=device)
 
-                    loss_initial_conditions = torch.tensor(0.0, device=device)
-                    loss_boundary_conditions = torch.tensor(0.0, device=device)
-                    loss_colocation = torch.tensor(0.0, device=device)
-                    loss_physics = torch.tensor(0.0, device=device)
+                        # ---------------- Initial conditions ----------------
+                        if self.initial:
+                            try:
+                                ic = next(it_ic)
+                            except StopIteration:
+                                it_ic = iter(Dataloader_ic)
+                                ic = next(it_ic)
 
-                    # ---------------- Initial conditions ----------------
-                    if self.initial:
-                        try:
-                            ic = next(it_ic)
-                        except StopIteration:
-                            it_ic = iter(Dataloader_ic)
-                            ic = next(it_ic)
-
-                        ic_pred = torch.stack((ic[0], ic[1])).T.to(device)
-                        ic_pred.requires_grad_()
-                        u_pd_ini = model(ic_pred)
-                        u_exa_ini = ic[2].to(device)
-                        loss_initial_conditions = self.w_1 * loss_func(u_pd_ini, u_exa_ini)
-                        # if step >= n_steps - 2:
-                        #     loss_ini_update = loss_initial_conditions.clone().requires_grad_().detach()
-                        if ep < 10 or ep >= 20:
-                            loss = loss + loss_initial_conditions
-
-                    # ---------------- Boundary / observations ----------------
-                    if self.collocation:
-                        try:
-                            bc = next(it_bc)
-                        except StopIteration:
-                            it_bc = iter(Dataloader_bc)
-                            bc = next(it_bc)
-
-                        bc_pred = torch.stack((bc[0], bc[1])).T.to(device)
-                        u_pd_bc = model(bc_pred)
-                        u_exa_bc = bc[2].to(device)
-                        loss_boundary_conditions = self.w_2 * loss_func(u_pd_bc, u_exa_bc)
-                        # if step >= n_steps - 2:
-                        #     loss_bc_update = loss_boundary_conditions.clone().requires_grad_().detach()
-                        if ep < 10 or ep >= 20:
-                            loss = loss + loss_boundary_conditions
-
-                        # ---------------- Colocation ----------------
-                        # try:
-                        #     cl = next(it_cl)
-                        # except StopIteration:
-                        #     it_cl = iter(Dataloader_cl)
-                        #     cl = next(it_cl)
-
-                        # cl_pred = torch.stack((cl[0], cl[1])).T.to(device)
-                        # u_pd_cl = model(cl_pred)
-                        # u_exa_cl = cl[2].to(device)
-                        # loss_colocation = self.w_3 * loss_func(u_pd_cl, u_exa_cl)
-                        # loss = loss + loss_colocation
-
-                    # ---------------- Physics (résidus GOY) ----------------
-                    if self.physic and ep >=10:
-                        try:
-                            grid_batch = next(it_grid)
-                        except StopIteration:
-                            it_grid = iter(Dataloader_grid)
-                            grid_batch = next(it_grid)
-
-                        # grid_batch attendu : (k, t, idx) ou équivalent selon grid_data
-                        # à adapter selon la sortie exacte de votre Dataset/Sampler
-                        nb_time_grid = 256 # ##################################################################################################
-                        grid_k, grid_t, grid_idx = grid_batch
-                        grid_train_data = torch.stack((grid_k, grid_t)).T.to(device)
-                        grid_train_data.requires_grad_()
-
-                        u_pd = model(grid_train_data)
-
-                        u_t = torch.autograd.grad(
-                            u_pd, grid_train_data,
-                            grad_outputs=torch.ones_like(u_pd),
-                            create_graph=True
-                        )[0][:, 1:2]  # dérivée par rapport à t
-
-                        # ---- reconstruction des résidus GOY sur ce batch ----
-                        # NB : nécessite que grid_batch contienne, pour chaque t,
-                        # les shells voisins nécessaires au stencil (k-2..k+2).
-                        # Réutiliser ici votre code de calcul de
-                        # GOY_physics_real / GOY_physics_im tel qu'il existe
-                        # déjà dans votre fichier, mais restreint à ce batch.
-                        # print(f"Grid batch size: {grid_train_data.size(0)}")
-                        # print(f"Grid batch shape: {grid_train_data.shape}")
-                        # print("calcul loss physics")
-                        loss_physics = physics_losses()
-                        if step%int(n_steps/2)==0:
-                            print(loss_physics)
-                        #loss_physics_update = [l.clone().detach() for l in loss_physics]
-                        # compute_GOY_residuals(
-                        #     u_pd, u_t, grid_train_data, K, eps, lmb, nu,
-                        #     k_min_collocation, k_max
-                        # )
-
-                        # loss_physics = self.w_4 * (
-                        #     torch.mean(GOY_physics_real ** 2)
-                        #     + torch.mean(GOY_physics_im ** 2)
-                        # ) / 2
-                        if ep >= 10 and ep < 20:
+                            ic_pred = torch.stack((ic[0], ic[1])).T.double().to(device)
+                            ic_pred.requires_grad_()
+                            u_pd_ini = model(ic_pred)
+                            u_exa_ini = ic[2].double().to(device)
+                            loss_initial_conditions = self.w_1 * loss_func(u_pd_ini, u_exa_ini)
                             # if step >= n_steps - 2:
-                            #     loss_physics_update = [l.clone().requires_grad_().detach() for l in loss_physics]
-                            #loss_physics = np.exp(-(10/(2*self.epoch+1-10))) * loss_physics
-                            #print(np.exp(-(10/(2*(self.epoch+1-10)))))
-                            #print("loss phy weighted")
-                            loss = weighter.weighted_loss(loss_ic=loss_initial_conditions, loss_bc=loss_boundary_conditions, loss_r=loss_physics, epoch=ep)
-                        if ep >= 20:
-                            loss= loss + loss_physics
-                    if ep >= 10 and ep < 20:
-                        if step >0 and step%(int((n_steps+2)/2)) == 0:
-                            if self.physic:
-                                print(f"update and loss = {loss}")
-                                weighter.update(loss_ic=loss_initial_conditions, loss_bc=loss_boundary_conditions, loss_r=loss_physics, model_params=list(model.parameters()), epoch=ep)
-                    # ---------------- Backward + step par batch ----------------
-                    loss_batch_tracker[step] = loss.item()
-                    if  step%(int(n_steps/10)) == 0:
-                        print(f"Step {step}, Loss: {loss.item()}")
-                    #     torch.save(model.state_dict(), "best_model.pth")
-                    #     print(f"New best model saved at epoch {ep}")
+                            #     loss_ini_update = loss_initial_conditions.clone().requires_grad_().detach()
+                            if ep < 5 or ep >= 20:
+                                loss = loss + loss_initial_conditions
 
-                    loss.backward()
-                    self.optimizer.step()
-                    epoch_loss_total += loss.item()
-                    epoch_loss_ic += loss_initial_conditions.item()
-                    epoch_loss_bc += loss_boundary_conditions.item()
-                    epoch_loss_cl += loss_colocation.item()
-                    if ep < 10 or ep >= 20:
-                        epoch_loss_phy += loss_physics.item()
+                        # ---------------- Boundary / observations ----------------
+                        if self.collocation:
+                            try:
+                                bc = next(it_bc)
+                            except StopIteration:
+                                it_bc = iter(Dataloader_bc)
+                                bc = next(it_bc)
+
+                            bc_pred = torch.stack((bc[0], bc[1])).T.double().to(device)
+                            u_pd_bc = model(bc_pred)
+                            u_exa_bc = bc[2].double().to(device)
+                            loss_boundary_conditions = self.w_2 * loss_func(u_pd_bc, u_exa_bc)
+                            # if step >= n_steps - 2:
+                            #     loss_bc_update = loss_boundary_conditions.clone().requires_grad_().detach()
+                            if ep < 5 or ep >= 20:
+                                loss = loss + loss_boundary_conditions
+
+                            # ---------------- Colocation ----------------
+                            # try:
+                            #     cl = next(it_cl)
+                            # except StopIteration:
+                            #     it_cl = iter(Dataloader_cl)
+                            #     cl = next(it_cl)
+
+                            # cl_pred = torch.stack((cl[0], cl[1])).T.to(device)
+                            # u_pd_cl = model(cl_pred)
+                            # u_exa_cl = cl[2].to(device)
+                            # loss_colocation = self.w_3 * loss_func(u_pd_cl, u_exa_cl)
+                            # loss = loss + loss_colocation
+
+                        # ---------------- Physics (résidus GOY) ----------------
+                        if self.physic and ep >=5:
+                            try:
+                                grid_batch = next(it_grid)
+                            except StopIteration:
+                                it_grid = iter(Dataloader_grid)
+                                grid_batch = next(it_grid)
+
+                            # grid_batch attendu : (k, t, idx) ou équivalent selon grid_data
+                            # à adapter selon la sortie exacte de votre Dataset/Sampler
+                            nb_time_grid = 256 # ##################################################################################################
+                            grid_k, grid_t, grid_idx = grid_batch
+                            grid_train_data = torch.stack((grid_k, grid_t)).T.to(device)
+                            grid_train_data.requires_grad_()
+
+                            u_pd = model(grid_train_data)
+
+                            u_t = torch.autograd.grad(
+                                u_pd, grid_train_data,
+                                grad_outputs=torch.ones_like(u_pd),
+                                create_graph=True
+                            )[0][:, 1:2]  # dérivée par rapport à t
+
+                            
+                            loss_physics = physics_losses(it_grid=it_grid,Dataloader_grid=Dataloader_grid,epoch=ep,weight=False)
+                            if step%int(n_steps/2)==0:
+                                print(loss_physics)
+                            #loss_physics_update = [l.clone().detach() for l in loss_physics]
+                            # compute_GOY_residuals(
+                            #     u_pd, u_t, grid_train_data, K, eps, lmb, nu,
+                            #     k_min_collocation, k_max
+                            # )
+
+                            # loss_physics = self.w_4 * (
+                            #     torch.mean(GOY_physics_real ** 2)
+                            #     + torch.mean(GOY_physics_im ** 2)
+                            # ) / 2
+                            # if ep >= 5 and ep < 10:
+                            #     # if step >= n_steps - 2:
+                            #     #     loss_physics_update = [l.clone().requires_grad_().detach() for l in loss_physics]
+                            #     #loss_physics = np.exp(-(10/(2*self.epoch+1-10))) * loss_physics
+                            #     #print(np.exp(-(10/(2*(self.epoch+1-10)))))
+                            #     #print("loss phy weighted")
+                                
+                            #     loss = weighter.weighted_loss(loss_ic=loss_initial_conditions, loss_bc=loss_boundary_conditions, loss_r=loss_physics, epoch=ep)
+                            #     print(f"weighted loss {loss}")
+                            # if ep >= 20:
+                            loss= loss + loss_physics
+                        # if ep >= 5 and ep < 10:
+                        #     if step >0 and step%(int((n_steps+2)/2)) == 0:
+                        #         if self.physic:
+                        #             print(f"update and loss = {loss}")
+                        #             weighter.update(loss_ic=loss_initial_conditions, loss_bc=loss_boundary_conditions, loss_r=loss_physics, model_params=list(model.parameters()), epoch=ep)
+                        # ---------------- Backward + step par batch ----------------
+                        loss_batch_tracker[step] = loss.item()
+                        if  step%(int(n_steps/10)) == 0:
+                            print(f"Step {step}, Loss: {loss.item()}")
+                        #     torch.save(model.state_dict(), "best_model.pth")
+                        #     print(f"New best model saved at epoch {ep}")
+
+                        loss.backward()
+                        self.optimizer.step()
+                    else :
+                        weight = False
+                        double = True
+                        model.double() 
+                        loss = self.optimizer_ss_b.step(it_grid,Dataloader_grid,it_bc,Dataloader_bc,it_ic,Dataloader_ic,weight,ep,step,n_steps,double)
+                    if ep < ep_broyden:
+                        epoch_loss_total += loss.item()
+                        epoch_loss_ic += loss_initial_conditions.item()
+                        epoch_loss_bc += loss_boundary_conditions.item()
+                        epoch_loss_cl += loss_colocation.item()
                     else:
-                        epoch_loss_phy += sum(loss_physics).item()
+                        epoch_loss_total += loss
+                        # epoch_loss_ic += loss_initial_conditions.item()
+                        # epoch_loss_bc += loss_boundary_conditions.item()
+                        # epoch_loss_cl += loss_colocation.item()
+
+                    # if ep < 10 or ep >= 20:
+                    #     epoch_loss_phy += loss_physics.item()
+                    # else:
+                    # if ep >= 5 and ep <10:
+                    #     epoch_loss_phy += loss_physics.item()
                     nb_batches += 1
             
                 # if ep >= 10 and ep < 20:
@@ -762,7 +802,7 @@ class Train_PINN():
                 loss_colocation_tracker[ep] = epoch_loss_cl / nb_batches
                 loss_physics_tracker[ep] = epoch_loss_phy / nb_batches
                 print(f"[epoch {ep}] loss_total={loss_trackeur[0:ep]} loss={loss} min_loss={np.min(loss_trackeur[0:ep+1])} ")
-                if (ep > 10) and loss_trackeur[ep] <= np.min(loss_trackeur[11:ep+1]):
+                if (ep > 5) and loss_trackeur[ep] <= np.min(loss_trackeur[5:ep+1]):
                             torch.save(model.state_dict(), "best_model.pth")
                             print(f"New best model saved at epoch {ep}")
 
@@ -1084,6 +1124,7 @@ torch.manual_seed(119)
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 model = GOY_PINN(n_input=2,n_output=1,n_hidden=largeur_couche,n_layers=nb_couche,batch_size=1,ic_size=1)
+model.double()
 model.to(device)
 
 
