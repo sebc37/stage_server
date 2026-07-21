@@ -25,7 +25,7 @@ class GOY_PINN(nn.Module):
         self.B_fourier = torch.randn(n_input, n_fourier).to(device) * sigma
         fourier_out_dim = 2 * n_fourier
 
-        activation = nn.Tanh
+        activation = nn.SiLU
         self.input_layer = nn.Sequential(*[
                                     nn.Linear(fourier_out_dim, n_hidden),
                                     activation()])#.to(device)
@@ -114,7 +114,7 @@ class boundary_variables_data(Dataset):
         self.nb_k = np.shape(X_boundary)[1]
         self.nb_t = np.shape(X_boundary)[0]
        
-        time = torch.arange(0.1*time,time,0.9*time/Npts,dtype=torch.float32) #(time/f)*1/N_fs  #10*(f-0.1)*dt
+        time = torch.arange(0,time,time/Npts,dtype=torch.float32) #(time/f)*1/N_fs  #10*(f-0.1)*dt
         shell = torch.arange(0,self.X_boundary.shape[1],1,dtype=torch.float32)
         grid_shell,grid_time = torch.meshgrid(shell,time[mask],indexing="xy")
         grid_shell = grid_shell.T.contiguous().view(len(self.mask)*self.X_boundary.shape[1],1) #Npts*self.X_boundary.shape[1]
@@ -278,7 +278,7 @@ class DynamicLossWeighter:
             """Calcule la norme L2 du gradient de `loss` par rapport aux paramètres."""
             grads = torch.autograd.grad(
                 loss, model_params,
-                retain_graph=True, create_graph=False, allow_unused=True
+                retain_graph=False, create_graph=False, allow_unused=True
             )
             #print("shape : " , len(grads))
             total = sum(
@@ -370,7 +370,7 @@ class DynamicLossWeighter:
                 self.lmb_phy = self.alpha * self.lmb_phy + (1 - self.alpha) * lmbphy_list#.item()
 
 
-    def weighted_loss(self, loss_ic, loss_bc, loss_r):
+    def weighted_loss(self, loss_ic, loss_bc, loss_r,iteration,offset):
         """Retourne la loss totale pondérée."""
         #print("lmb used bc : ",self.lambda_bc,type(self.lambda_bc))
         #print("lmb used phy : ",self.lambda_r,type(self.lambda_r))
@@ -378,7 +378,7 @@ class DynamicLossWeighter:
             return (
                 self.lambda_ic * loss_ic +
                 self.lambda_bc * loss_bc +
-                + sum(l * r for l, r in zip(self.lmb_phy, loss_r))
+                + np.exp(-1/(iteration+1-offset))*sum(l * r for l, r in zip(self.lmb_phy, loss_r))
             )
         else:
             return (
