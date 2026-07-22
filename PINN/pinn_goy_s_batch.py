@@ -20,7 +20,7 @@ import argparse
 
 class Train_PINN():
 
-    def __init__(self,learning_rate,nbr_iteration,w_1,w_2,w_3,w_4,sample_phy,iteration=False,epoch=15,physic=True,collocation=True,initial=True,normalize_phy=True,inline_phy=True,normalize_energie=0):
+    def __init__(self,learning_rate,nbr_iteration,w_1,w_2,w_3,w_4,sample_phy,iteration=False,epoch=240,physic=True,collocation=True,initial=True,normalize_phy=True,inline_phy=True,normalize_energie=0):
         self.learning_rate = learning_rate
         self.nbr_iteration = nbr_iteration
         self.w_1 = w_1
@@ -270,7 +270,7 @@ class Train_PINN():
                 loss_ic = batch_ic_losses(model,it_ic,Dataloader_ic)
                 loss_obs = batch_bc_losses(model,it_bc,Dataloader_bc)
                 loss_phy = physics_losses(model,it_grid=it_grid,Dataloader_grid=Dataloader_grid,epoch=ep,weight=weight,double=double)
-                loss = weighter.weighted_loss(loss_ic=loss_ic,loss_bc=loss_obs,loss_r=loss_phy)
+                loss = weighter.weighted_loss(loss_ic=loss_ic,loss_bc=loss_obs,loss_r=loss_phy,epoch=ep)
                 if step%int(n_steps/2)==0:
                     weighter.update(loss_ic=loss_ic,loss_bc=loss_obs,loss_r=loss_phy,model_params=list(model.parameters()),epoch=ep)
             else:
@@ -602,6 +602,8 @@ class Train_PINN():
                     lmb_phy_trackeur[i,iteration] = weighter.lmb_phy[i].cpu().detach().numpy()
 
         else:
+
+             
             print(sum(p.numel() for p in model.parameters() if p.requires_grad))
 
             self.optimizer_ss_b = SSBroydenOptimizer(
@@ -619,10 +621,23 @@ class Train_PINN():
                     )
             #params = list(model.parameters())
             loss_func = torch.nn.MSELoss()
-            ep_broyden = 4
+            ep_broyden = 200
+            epnwh = 100
+            epwh = 200
+
+            def closure():
+                self.optimizer_lbfgs.zero_grad()
+    
+                double=False
+                
+                weight=False
+               
+                loss = total_loss(model,it_grid,Dataloader_grid,it_bc,Dataloader_bc,it_ic,Dataloader_ic,weight,ep,step,n_steps,double=double) 
+                loss.backward()
+                return loss
         
             for ep in tqdm.tqdm(range(self.epoch)):
-
+                
                 epoch_loss_total = 0.0
                 epoch_loss_ic = 0.0
                 epoch_loss_bc = 0.0
@@ -673,8 +688,8 @@ class Train_PINN():
                             loss_initial_conditions = self.w_1 * loss_func(u_pd_ini, u_exa_ini)
                             # if step >= n_steps - 2:
                             #     loss_ini_update = loss_initial_conditions.clone().requires_grad_().detach()
-                            if ep < 5 or ep >= 20:
-                                loss = loss + loss_initial_conditions
+                            #if ep < 5 or ep >= 20:
+                            loss = loss + loss_initial_conditions
 
                         # ---------------- Boundary / observations ----------------
                         if self.collocation:
@@ -707,7 +722,7 @@ class Train_PINN():
                             # loss = loss + loss_colocation
 
                         # ---------------- Physics (résidus GOY) ----------------
-                        if self.physic and ep >=5:
+                        if self.physic and ep >=epnwh:
                             try:
                                 grid_batch = next(it_grid)
                             except StopIteration:
@@ -730,7 +745,7 @@ class Train_PINN():
                             )[0][:, 1:2]  # dérivée par rapport à t
 
                             
-                            loss_physics = physics_losses(it_grid=it_grid,Dataloader_grid=Dataloader_grid,epoch=ep,weight=False)
+                            loss_physics = physics_losses(model=model,it_grid=it_grid,Dataloader_grid=Dataloader_grid,epoch=ep,weight=True)
                             if step%int(n_steps/2)==0:
                                 print(loss_physics)
                             #loss_physics_update = [l.clone().detach() for l in loss_physics]
@@ -753,7 +768,7 @@ class Train_PINN():
                             #     loss = weighter.weighted_loss(loss_ic=loss_initial_conditions, loss_bc=loss_boundary_conditions, loss_r=loss_physics, epoch=ep)
                             #     print(f"weighted loss {loss}")
                             # if ep >= 20:
-                            loss= loss + loss_physics
+                            loss= loss + sum(loss_physics)
                         # if ep >= 5 and ep < 10:
                         #     if step >0 and step%(int((n_steps+2)/2)) == 0:
                         #         if self.physic:
@@ -769,17 +784,19 @@ class Train_PINN():
                         loss.backward()
                         self.optimizer.step()
                     else :
-                        weight = False
-                        double = True
-                        model.double() 
-                        loss = self.optimizer_ss_b.step(it_grid,Dataloader_grid,it_bc,Dataloader_bc,it_ic,Dataloader_ic,weight,ep,step,n_steps,double)
+                       
+                        loss = self.optimizer_lbfgs.step(closure)
+                        # weight = False
+                        # double = True
+                        # model.double() 
+                        #loss = self.optimizer_ss_b.step(it_grid,Dataloader_grid,it_bc,Dataloader_bc,it_ic,Dataloader_ic,weight,ep,step,n_steps,double)
                     if ep < ep_broyden:
                         epoch_loss_total += loss.item()
                         epoch_loss_ic += loss_initial_conditions.item()
                         epoch_loss_bc += loss_boundary_conditions.item()
                         epoch_loss_cl += loss_colocation.item()
                     else:
-                        epoch_loss_total += loss
+                        epoch_loss_total += loss.item()
                         # epoch_loss_ic += loss_initial_conditions.item()
                         # epoch_loss_bc += loss_boundary_conditions.item()
                         # epoch_loss_cl += loss_colocation.item()
@@ -801,11 +818,30 @@ class Train_PINN():
                 loss_boundary_conditions_tracker[ep] = epoch_loss_bc / nb_batches
                 loss_colocation_tracker[ep] = epoch_loss_cl / nb_batches
                 loss_physics_tracker[ep] = epoch_loss_phy / nb_batches
+                switch=0
+                switch1=0
+
                 print(f"[epoch {ep}] loss_total={loss_trackeur[0:ep]} loss={loss} min_loss={np.min(loss_trackeur[0:ep+1])} ")
-                if (ep > 5) and loss_trackeur[ep] <= np.min(loss_trackeur[5:ep+1]):
-                            torch.save(model.state_dict(), "best_model.pth")
+                if (ep <=epnwh) and loss_trackeur[ep] <= np.min(loss_trackeur[0:ep+1]):
+                            torch.save(model.state_dict(), PATH + "best_model_noweight.pth")
+                            print(f"New best model saved at epoch {ep}")
+                if ep >= epnwh and switch==0:
+                    model.load_state_dict(torch.load( PATH + "best_model_noweight.pth"))
+                    switch=1
+                if (ep >epnwh) and ep<=epwh and loss_trackeur[ep] <= np.min(loss_trackeur[epnwh+1:ep+1]):
+
+                            torch.save(model.state_dict(), "best_model_weight.pth")
                             print(f"New best model saved at epoch {ep}")
 
+                if ep >= epwh and switch1==0:
+                    if os.path.exists(PATH + "best_model_weight.pth"):
+                        model.load_state_dict(torch.load( PATH + "best_model_weight.pth"))
+                        switch1=1        
+                if (ep > epwh) and loss_trackeur[ep] <= np.min(loss_trackeur[epwh:ep+1]):
+                            torch.save(model.state_dict(),PATH +"best_model.pth")
+                            print(f"New best model saved at epoch {ep}")
+                if ep==self.epoch-1:
+                     torch.save(model.state_dict(),PATH +"last_model.pth")
                 if ep % 1 == 0:
                     print(f"[epoch {ep}] loss_total={loss_trackeur[ep]} "
                         f"ic={loss_initial_conditions_tracker[ep]} "
@@ -1085,7 +1121,7 @@ ratio_sample_phy = config["ratio_sample_phy"]
 #Data_shell = reduced_center(Data_shell,mean,Std_mode) # centré réduit tous les modes 
 Data_ic = Data_shell[0,:] # prends tous le spoints en t=0
 random_samples = np.random.choice( Npts, size=int(ratio_sample_obs*Npts), replace=False) # prends 18000 points de la partie filtrée pour les collocation points
-Data_bc = Data_shell[:,k_bc_min:2*k_bc_max] # prends tous les points allant de k_min à k_max 
+Data_bc = Data_shell[:,2*(k_bc_min-1):2*(k_bc_max-1)] # prends tous les points allant de k_min à k_max 
 print(Data_bc.shape)
 print("Moyenne de l'ensemble des mode",np.mean(Data_shell))
 print("std de tous les modes ", np.std(Data_shell))
@@ -1313,12 +1349,42 @@ t = Train_PINN(learning_rate,nbr_iteration,w_1,w_2,w3,w_4,sample_phy=random_samp
                physic=physic,initial=initial,collocation=collocation,
                normalize_phy= normalize_phy,inline_phy=inline_phy)
 Total_loss = t.train()
+
+plt.figure()
+plt.semilogy(Total_loss["loss"].cpu().detach().numpy(),label='Loss Total')
+plt.semilogy(Total_loss["loss_physics_tracker"],label='Loss Physique totale')
+#plt.plot(Total_loss[2],label='Colocation Loss')
+plt.semilogy(Total_loss["loss_boundary_conditions_tracker"],label='Loss observations')
+plt.plot(Total_loss["loss_initial_conditions_tracker"],label='initial Conditions Loss' )  
+plt.xlabel('Iterations')
+plt.ylabel('Losses')
+plt.legend()
+plt.savefig(PATH + f"losses.png") #_{int(ratio*100)}
+plt.close()
+
+
+plt.figure()
+plt.semilogy(Total_loss["lmb_tracker_bc"],label='lmb obs')
+#plt.semilogy(Total_loss["lmb_physics_trackeur"],label='lmb phy')
+plt.semilogy(Total_loss["lmb_ic_trackeur"],label='lmb ic')
+plt.xlabel('Iterations')
+plt.ylabel('Lambda')
+plt.legend()
+plt.savefig(PATH + f"lambda.png") #_{int(ratio*100)}
+plt.close()
+
+
+
+
 model_eval = GOY_PINN(n_input=2,n_output=1,n_hidden=largeur_couche,n_layers=nb_couche,batch_size=1,ic_size=1)
-model_eval.load_state_dict(torch.load("best_model.pth", map_location=device, weights_only=True))
+# if os.path.exists(PATH + "best_model.pth"):
+#     model_eval.load_state_dict(torch.load(PATH + "best_model.pth", map_location=device, weights_only=True))
+# else:
+model_eval.load_state_dict(torch.load(PATH + "last_model.pth", map_location=device, weights_only=True))
 model_eval.eval()
 model_eval.to(device)
 #torch.stack((bc[0], bc[1])).T.to(device)
-U = model_eval(grid_dataset.grid.to(device))
+U = model_eval(grid_dataset.grid.to(device).double())
 total_params = sum(p.numel() for p in model_eval.parameters() if p.requires_grad)
 print(f'Total number of parameters: {total_params}')
 U_split = torch.split(U,Npts)
@@ -1459,28 +1525,6 @@ plt.close(fig)
 #torch.save(model.state_dict(),'/Odyssey/private/s26calme/code_stage/')
 
 
-plt.figure()
-plt.semilogy(Total_loss["loss"].cpu().detach().numpy(),label='Loss Total')
-plt.semilogy(Total_loss["loss_physics_tracker"],label='Loss Physique totale')
-#plt.plot(Total_loss[2],label='Colocation Loss')
-plt.semilogy(Total_loss["loss_boundary_conditions_tracker"],label='Loss observations')
-plt.plot(Total_loss["loss_initial_conditions_tracker"],label='initial Conditions Loss' )  
-plt.xlabel('Iterations')
-plt.ylabel('Losses')
-plt.legend()
-plt.savefig(PATH + f"losses.png") #_{int(ratio*100)}
-plt.close()
-
-
-plt.figure()
-plt.semilogy(Total_loss["lmb_tracker_bc"],label='lmb obs')
-#plt.semilogy(Total_loss["lmb_physics_trackeur"],label='lmb phy')
-plt.semilogy(Total_loss["lmb_ic_trackeur"],label='lmb ic')
-plt.xlabel('Iterations')
-plt.ylabel('Lambda')
-plt.legend()
-plt.savefig(PATH + f"lambda.png") #_{int(ratio*100)}
-plt.close()
 
 n  = U_exa.shape[1]    # nb de composantes réelles (re + im par couche)
 nb = U_exa.shape[0]        # nb de pas de temps

@@ -383,7 +383,7 @@ class DynamicLossWeighter:
             return (
                 self.lambda_ic * loss_ic +
                 self.lambda_bc * loss_bc +
-                + sum(np.exp(-(10/(2*(epoch+1-10)))) * l * r for l, r in zip(self.lmb_phy, loss_r))
+                + sum(np.exp(-(1/(2*(epoch+1)))) * l * r for l, r in zip(self.lmb_phy, loss_r))
             )
         else:
             return (

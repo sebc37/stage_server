@@ -1,11 +1,11 @@
 PINN:
     - 64
-    - 4
+    - 8
 
 ratio: 0.05          # fraction des points d'observation  (0 < ratio <= 1)
 
-k_min_boundary: 0
-k_max_boundary: 22
+k_min_boundary: 6
+k_max_boundary: 9
 k_min_collocation: 0
 k_max_collocation: 22
 
@@ -19,6 +19,6 @@ initial: 1
 collocation: 1
 normalize_phy: 0
 inline_phy: 0
-ratio_sample_obs: 0.1
+ratio_sample_obs: 1.0
 ratio_sample_phy: 0.1
 batch_phy: 512
